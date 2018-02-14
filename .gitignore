@@ -1,0 +1,6 @@
+/data
+/test
+/scripts
+/models
+*.pyc
+*.swp
