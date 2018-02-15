@@ -180,7 +180,7 @@ def eval_model():
     correct = 0
     wrong = 0
     for sample in samples:
-        logger.log_info(module_name, 'Guessed ' + str(sample['guess']) +  ', was ' + str(sample['label']))
+        logger.log_debug(module_name, 'Guessed ' + str(sample['guess']) +  ', was ' + str(sample['label']))
         if sample['label'] == sample['guess']:
             correct += 1
         else:
@@ -195,12 +195,12 @@ if __name__ == '__main__':
     parser = OptionParser(usage='Usage: %prog [options] directory')
 
     parser_group_sys = OptionGroup(parser, 'System Options')
-    parser_group_sys.add_option('-l', '--logging', action='store', dest='log_level', type='int', default='20',
+    parser_group_sys.add_option('-l', '--logging', action='store', dest='log_level', type='int', default=20,
                                 help='Logging level (10: Debug, 20: Info, 30: Warning, 40: Error, 50: Critical) (default: Info)')
     parser_group_sys.add_option('-t', '--threads', action='store', dest='threads', type='int', default=cpu_count(),
                                 help='Number of threads to use when parsing PT traces (default: number of CPU cores)')
-    parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default='10000',
-                                help='Size of the results queue, making this too large may exhaust memory (default 10000)')
+    parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32768,
+                                help='Size of the results queue, making this too large may exhaust memory (default 32768)')
     parser_group_sys.add_option('--skip-test', action='store_true', dest='skip_test',
                                  help='Skip the testing stage, useful when combined with saving to just make and store a model')
     parser_group_sys.add_option('--skip-eval', action='store_true', dest='skip_eval',
@@ -208,11 +208,11 @@ if __name__ == '__main__':
     parser.add_option_group(parser_group_sys)
 
     parser_group_data = OptionGroup(parser, 'Data Options')
-    parser_group_data.add_option('--train-size', action='store', dest='train_size', type='int', default='32',
+    parser_group_data.add_option('--train-size', action='store', dest='train_size', type='int', default=32,
                                  help='Number of traces to train on (default: 32)')
-    parser_group_data.add_option('--test-size', action='store', dest='test_size', type='int', default='2',
+    parser_group_data.add_option('--test-size', action='store', dest='test_size', type='int', default=2,
                                  help='Number of traces to test on (default: 2)')
-    parser_group_data.add_option('-r', '--ratio', action='store', dest='sample_ratio', type='float', default='0.5',
+    parser_group_data.add_option('-r', '--ratio', action='store', dest='sample_ratio', type='float', default=0.5,
                                  help='The ratio of benign to malicious samples to use (default: 0.5)')
     parser_group_data.add_option('-o', '--output-sets', action='store', dest='output_sets', type='string', default='',
                                  help='Write the picked samples to the provided file so these sets can be resused in future runs (see -i)')
@@ -221,25 +221,25 @@ if __name__ == '__main__':
     parser.add_option_group(parser_group_data)
 
     parser_group_lstm = OptionGroup(parser, 'LSTM Options')
-    parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default='128',
+    parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=128,
                                  help='Length of sequences fed into LSTM (default: 128)')
-    parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default='128',
+    parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=128,
                                  help='Number of sequences per batch (default: 128)')
-    parser_group_lstm.add_option('-e', '--epochs', action='store', dest='epochs', type='int', default='1',
+    parser_group_lstm.add_option('-e', '--epochs', action='store', dest='epochs', type='int', default=1,
                                  help='Number of times to iterate over test sets (default: 1)')
-    parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default='100',
+    parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=100,
                                  help='Number of units to use in LSTM (default: 100)')
     parser_group_lstm.add_option('--save-model', action='store', dest='save_model', type='string', default='',
                                  help='Save the generated model to the provided filepath in JSON format')
     parser_group_lstm.add_option('--save-weights', action='store', dest='save_weights', type='string', default='',
                                  help='Save the weights after training to the provided filepath in H5 format')
-    parser_group_lstm.add_option('--checkpoint', action='store', dest='checkpoint_interval', type='int', default='0',
+    parser_group_lstm.add_option('--checkpoint', action='store', dest='checkpoint_interval', type='int', default=0,
                                  help='Save current weights every X minutes (default: only save after training)')
     parser_group_lstm.add_option('--use-model', action='store', dest='use_model', type='string', default='',
                                  help='Load the model from the provided filepath instead of building a new one')
     parser_group_lstm.add_option('--use-weights', action='store', dest='use_weights', type='string', default='',
                                  help='Load weights from the provided filepath (this will skip training and head straight to evaluation)')
-    parser_group_lstm.add_option('--eval-threshold', action='store', dest='eval_threshold', type='float', default='0.95',
+    parser_group_lstm.add_option('--eval-threshold', action='store', dest='eval_threshold', type='float', default=0.95,
                                  help='How confident model has to be that a sequence is malicious to mark the trace malicious (default: 0.95)')
     parser.add_option_group(parser_group_lstm)
 
@@ -297,8 +297,8 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'LSTM must have at least 1 unit')
         errors = True
 
-    if options.checkpoint_interval < 1:
-        logger.log_error(module_name, 'Checkpoint interval must be at least 1')
+    if options.checkpoint_interval < 0:
+        logger.log_error(module_name, 'Checkpoint interval cannot be negative')
         errors = True
 
     if options.checkpoint_interval > 0 and len(options.save_weights) < 1:
