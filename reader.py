@@ -139,6 +139,20 @@ def get_encoding(source_filename, offset, encoding):
     except:
         return None
 
+def warn_and_debug(has_warned, warning, debug):
+    """ Prints a debug message and also generates a generic warning message if one hasn't
+        been produced before.
+
+    The point is so we know there were problems without spamming the warning log level.
+    """
+    if not has_warned:
+        logger.log_warning(module_name, warning)
+        has_warned = True
+
+    logger.log_debug(module_name, debug)
+
+    return has_warned
+
 def read_pt_file(filepath, memory, encoding, tip_only=False):
     """ Reads a file located at filepath and yields values that are normalized based on
         the provided encoding. Specifically, each address is compared against memory to
@@ -199,6 +213,8 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
     start_time = datetime.now()
     count = 0
     last_addr = 0
+    warning_msg = 'Non-critical problems while reading trace, see debug level (-l) for more info'
+    has_warned = False
     ptdump = subprocess.Popen(command, stdout=subprocess.PIPE)
     for line in ptdump.stdout:
         parts = line.split(' ')
@@ -207,17 +223,20 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
             try:
                 last_addr = int(parts[-1], 16)
             except:
-                logger.log_warning(module_name, 'Failed to convert ' + str(parts[-1]) + ' to int')
+                has_warned = warn_and_debug(has_warned, warning_msg,
+                        'Failed to convert ' + str(parts[-1]) + ' to int in ' + filepath)
                 continue
 
             mapping = get_source_file(last_addr, memory)
             if mapping is None:
-                logger.log_warning(module_name, 'Failed to find source file for address ' + hex(last_addr))
+                has_warned = warn_and_debug(has_warned, warning_msg,
+                        'Failed to find source file for address ' + hex(last_addr) + ' in ' + filepath)
                 continue
 
             value = get_encoding(mapping[2], last_addr - mapping[0], encoding)
             if value is None:
-                logger.log_warning(module_name, 'Failed to find encoding for ' + str(mapping[2]))
+                has_warned = warn_and_debug(has_warned, warning_msg,
+                        'Failed to find encoding for ' + str(mapping[2]) + ' in ' + filepath)
                 continue
 
             yield value
@@ -227,12 +246,14 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
             tnts = parts[-1].strip()
             mapping = get_source_file(last_addr, memory)
             if mapping is None:
-                logger.log_warning(module_name, 'Failed to find source file for address ' + hex(last_addr))
+                has_warned = warn_and_debug(has_warned, warning_msg,
+                        'Failed to find source file for address ' + hex(last_addr) + ' in ' + filepath)
                 continue
 
             value = get_encoding(mapping[2], 0, encoding)
             if value is None:
-                logger.log_warning(module_name, 'Failed to find encoding for ' + str(mapping[2]))
+                has_warned = warn_and_debug(has_warned, warning_msg,
+                        'Failed to find encoding for ' + str(mapping[2]) + ' in ' + filepath)
                 continue
 
             for tnt in tnts:
@@ -243,15 +264,19 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
                     yield value + 1
                     count += 1
                 else:
-                    logger.log_warning(module_name, 'Unexpected TNT value ' + str(tnt))
+                    has_warned = warn_and_debug(has_warned, warning_msg,
+                            'Unexpected TNT value ' + str(tnt) + ' in ' + filepath)
                     continue
 
         # These packet types don't yield anything, but are needed to keep track of last IP
         elif packet_type == 'fup':
+            if parts[-1].strip() == '<suppressed>':
+                continue
             try:
                 last_addr = int(parts[-1], 16)
             except:
-                logger.log_warning(module_name, 'Failed to convert ' + str(parts[-1]) + ' to int')
+                has_warned = warn_and_debug(has_warned, warning_msg,
+                        'Failed to convert ' + str(parts[-1]) + ' to int in ' + filepath)
                 continue
         elif packet_type == 'tip.pge':
             if parts[-1].strip() == '<suppressed>':
@@ -259,7 +284,8 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
             try:
                 last_addr = int(parts[-1], 16)
             except:
-                logger.log_warning(module_name, 'Failed to convert ' + str(parts[-1]) + ' to int')
+                has_warned = warn_and_debug(has_warned, warning_msg,
+                        'Failed to convert ' + str(parts[-1]) + ' to int in ' + filepath)
                 continue
         elif packet_type == 'tip.pgd':
             if parts[-1].strip() == '<suppressed>':
@@ -267,7 +293,8 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
             try:
                 last_addr = int(parts[-1], 16)
             except:
-                logger.log_warning(module_name, 'Failed to convert ' + str(parts[-1]) + ' to int')
+                has_warned = warn_and_debug(has_warned, warning_msg,
+                        'Failed to convert ' + str(parts[-1]) + ' to int in ' + filepath)
                 continue
 
     delta_time = datetime.now() - start_time
