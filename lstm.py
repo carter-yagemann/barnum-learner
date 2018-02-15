@@ -9,6 +9,7 @@ from optparse import OptionParser, OptionGroup
 import numpy as np
 import random
 from multiprocessing import cpu_count
+from datetime import datetime
 
 module_name = 'LSTM'
 
@@ -94,9 +95,21 @@ def map_to_model(samples, f):
 def train_model():
     """ Trains the LSTM model."""
     training_set = sets_meta['b_train'] + sets_meta['m_train']
+    start_time = datetime.now()
+    freq_c = options.checkpoint_interval * 60
+    last_c = datetime.now()
     for status in map_to_model(training_set, model.train_on_batch):
         if status is None:
             break
+        if freq_c > 0 and (datetime.now() - last_c).total_seconds() > freq_c:
+            logger.log_debug(module_name, 'Checkpointing weights')
+            try:
+                model.save_weights(options.save_weights)
+            except:
+                generator.stop_generator(10)
+                clean_exit(2, 'Failed to save LSTM weights')
+            last_c = datetime.now()
+    logger.log_debug(module_name, 'Training finished in ' + str(datetime.now() - start_time))
 
 def test_model():
     """ Test the LSTM model."""
@@ -220,6 +233,8 @@ if __name__ == '__main__':
                                  help='Save the generated model to the provided filepath in JSON format')
     parser_group_lstm.add_option('--save-weights', action='store', dest='save_weights', type='string', default='',
                                  help='Save the weights after training to the provided filepath in H5 format')
+    parser_group_lstm.add_option('--checkpoint', action='store', dest='checkpoint_interval', type='int', default='0',
+                                 help='Save current weights every X minutes (default: only save after training)')
     parser_group_lstm.add_option('--use-model', action='store', dest='use_model', type='string', default='',
                                  help='Load the model from the provided filepath instead of building a new one')
     parser_group_lstm.add_option('--use-weights', action='store', dest='use_weights', type='string', default='',
@@ -280,6 +295,14 @@ if __name__ == '__main__':
 
     if options.units < 1:
         logger.log_error(module_name, 'LSTM must have at least 1 unit')
+        errors = True
+
+    if options.checkpoint_interval < 1:
+        logger.log_error(module_name, 'Checkpoint interval must be at least 1')
+        errors = True
+
+    if options.checkpoint_interval > 0 and len(options.save_weights) < 1:
+        logger.log_error(module_name, 'Checkpointing requires --save-weights')
         errors = True
 
     if errors:
