@@ -46,7 +46,8 @@ def map_to_model(samples, f):
     threads = min(options.threads, len(samples))
 
     # When you gonna fire it up? When you gonna fire it up?
-    iqueue, oqueue = generator.start_generator(threads, reader.read_pt_file, options.queue_size, options.seq_len)
+    iqueue, oqueue = generator.start_generator(threads, reader.read_pt_file, options.queue_size,
+                                               options.seq_len, not options.no_sw)
 
     for sample in samples:
         if sample['label'] == 'malicious':
@@ -63,7 +64,7 @@ def map_to_model(samples, f):
             logger.log_warning(module_name, 'Failed to parse memory file, skipping')
             continue
 
-        iqueue.put((sample_label, sample['trace_filepath'], sample_memory, encoding))
+        iqueue.put((sample_label, sample['trace_filepath'], sample_memory, encoding, options.tip_only))
 
     # Get parsed sequences and feed them to the LSTM model
     xs = []
@@ -124,6 +125,10 @@ def test_model():
             res[stat] += status[stat]
         batches += 1
 
+    if batches < 1:
+        logger.log_warning(module_name, 'Testing set did not generate a full batch of data, cannot test')
+        return
+
     for stat in range(len(res)):
         res[stat] /= batches
 
@@ -136,8 +141,8 @@ def eval_model():
     # There's no point spinning up more worker threads than there are samples
     threads = min(options.threads, len(samples))
 
-    # When you gonna fire it up? When you gonna fire it up?
-    iqueue, oqueue = generator.start_generator(threads, reader.read_pt_file, options.queue_size, options.seq_len)
+    iqueue, oqueue = generator.start_generator(threads, reader.read_pt_file, options.queue_size,
+                                               options.seq_len, not options.no_sw)
 
     for idx in range(len(samples)):
         sample = samples[idx]
@@ -148,7 +153,7 @@ def eval_model():
             logger.log_warning(module_name, 'Failed to parse memory file, skipping')
             continue
 
-        iqueue.put((idx, sample['trace_filepath'], sample_memory, encoding))
+        iqueue.put((idx, sample['trace_filepath'], sample_memory, encoding, options.tip_only))
 
     # Get parsed sequences and feed them to the LSTM model
     xs = []
@@ -202,9 +207,13 @@ if __name__ == '__main__':
     parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32768,
                                 help='Size of the results queue, making this too large may exhaust memory (default 32768)')
     parser_group_sys.add_option('--skip-test', action='store_true', dest='skip_test',
-                                 help='Skip the testing stage, useful when combined with saving to just make and store a model')
+                                help='Skip the testing stage, useful when combined with saving to just make and store a model')
     parser_group_sys.add_option('--skip-eval', action='store_true', dest='skip_eval',
-                                 help='Skip the evaluation stage, useful when combined with saving to just make and store a model')
+                                help='Skip the evaluation stage, useful when combined with saving to just make and store a model')
+    parser_group_sys.add_option('--no-sliding-window', action='store_true', dest='no_sw',
+                                help='Do not use sliding window, which will result in less sequences being generated')
+    parser_group_sys.add_option('--tip-only', action='store_true', dest='tip_only',
+                                help='Only generate sequences from TIP packets, which will result in less sequences being generated')
     parser.add_option_group(parser_group_sys)
 
     parser_group_data = OptionGroup(parser, 'Data Options')

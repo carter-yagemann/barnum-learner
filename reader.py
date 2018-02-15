@@ -139,7 +139,7 @@ def get_encoding(source_filename, offset, encoding):
     except:
         return None
 
-def read_pt_file(filepath, memory, encoding):
+def read_pt_file(filepath, memory, encoding, tip_only=False):
     """ Reads a file located at filepath and yields values that are normalized based on
         the provided encoding. Specifically, each address is compared against memory to
         find the source file it belongs to and then that source file is compared against
@@ -156,6 +156,7 @@ def read_pt_file(filepath, memory, encoding):
     For example: (0x73fd0000, 0x74fd0000, '\Windows\SysWOW64\winmm.dll').
     encoding -- A linear array of filenames. The index of the filename represents a unique and
     consistent identifier for this file.
+    tip_only -- Only use TIP packets, ignore TNT.
 
     Yields:
     Encoded values as integers until EOF is reached, after which None is yielded.
@@ -222,7 +223,7 @@ def read_pt_file(filepath, memory, encoding):
             yield value
             count += 1
 
-        elif packet_type == 'tnt.8':
+        elif not tip_only and packet_type == 'tnt.8':
             tnts = parts[-1].strip()
             mapping = get_source_file(last_addr, memory)
             if mapping is None:

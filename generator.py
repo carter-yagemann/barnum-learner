@@ -14,7 +14,7 @@ gen_workers = []
 in_service = []
 running = Value('b', False)
 
-def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
+def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, sliding_window=True):
     """ Starts up a generator for dispatching jobs to the target function.
 
     Once started, arrays of arguments (jobs) can be appended to the job queue and the
@@ -36,6 +36,7 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
     res_queue_max -- The max size of the results queue. Once full, workers will wait for space.
     seq_len -- target is assumed to be a generator function, so workers will combine seq_len yielded
     values into an array before placing it on the results queue.
+    sliding_window -- Use sliding window. See worker_loop for more details.
 
     Returns:
     A queue for submitting jobs (job_queue) and a queue for getting results (res_queue).
@@ -52,7 +53,8 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
     running.value = True
     for id in range(num_workers):
         in_service.append(Value('b', False))
-        worker = Process(target=worker_loop, args=(target, job_queue, res_queue, running, in_service[id], int(seq_len)))
+        worker = Process(target=worker_loop, args=(target, job_queue, res_queue, running, in_service[id],
+                                                   int(seq_len), sliding_window))
         gen_workers.append(worker)
         worker.start()
 
@@ -85,7 +87,23 @@ def get_in_service():
 
     return count
 
-def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1):
+def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1, sliding_window=True):
+    """ Main worker loop, gets data from the target generator and chunks it into sequences.
+
+    By default, sequences are generated in a sliding window fashion. For example, if the data is
+    A, B, C, D, and seq_len is 2, the worker will yield:
+
+        A, B
+        B, C
+        C, D
+        ...
+
+    If sliding_window is False, then the generated sequences would be:
+
+        A, B
+        C, D
+        ...
+    """
     global module_name
     m_pid = os.getpid()
 
@@ -111,19 +129,18 @@ def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1):
                 if output is None:        # End of generator
                     break
 
-                if seq_len > 1:           # sequence outputs
-                    curr_size = len(seq)
-                    if curr_size < (seq_len - 1):
-                        seq.append(output)
-                    elif curr_size == (seq_len - 1):
-                        seq.append(output)
-                        res_queue.put([job[0], deepcopy(seq)])
-                    else:
-                        seq.pop(0)
-                        seq.append(output)
-                        res_queue.put([job[0], deepcopy(seq)])
-                else:                     # Don't sequence outputs
-                    res_queue.put([job[0], deepcopy(output)])
+                curr_size = len(seq)      # Sequence generation
+                if curr_size < (seq_len - 1):
+                    seq.append(output)
+                elif curr_size == (seq_len - 1):
+                    seq.append(output)
+                    res_queue.put([job[0], deepcopy(seq)])
+                    if not sliding_window:
+                        seq = []
+                else:
+                    seq.pop(0)
+                    seq.append(output)
+                    res_queue.put([job[0], deepcopy(seq)])
         except:
             logger.log_error(module_name, 'Error while processing job in worker ' + str(m_pid) + "\n" + str(traceback.format_exc()))
 
