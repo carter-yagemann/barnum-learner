@@ -138,6 +138,11 @@ def eval_model():
     """ Evaluate the LSTM model."""
     samples = sets_meta['b_test'] + sets_meta['m_test']
     random.shuffle(samples)
+
+    # Used for statistics
+    m_dist = [0] * 10
+    b_dist = [0] * 10
+
     # There's no point spinning up more worker threads than there are samples
     threads = min(options.threads, len(samples))
 
@@ -169,7 +174,7 @@ def eval_model():
                 logger.log_info(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        xs.append([list([seq]) for seq in res[1]])
+        xs.append(res[1])
         ss.append(res[0])
 
         if len(ss) == options.batch_size:
@@ -177,6 +182,17 @@ def eval_model():
             for idx in range(len(ps)):
                 if ps[idx][1] > options.eval_threshold:
                     samples[ss[idx]]['guess'] = 'malicious'
+                # Update distributions for statistical reporting
+                if ps[idx][1] == 1: # 100% confidence is unlikely, but possible
+                    offset = 9
+                else:
+                    offset = int(ps[idx][1] * 10)
+                assert offset >= 0 and offset < 10
+                if samples[ss[idx]]['label'] == 'malicious':
+                    m_dist[offset] += 1
+                else:
+                    b_dist[offset] += 1
+
             xs = []
             ss = []
 
@@ -193,6 +209,8 @@ def eval_model():
     accuracy = float(correct) / float(correct + wrong)
 
     logger.log_info(module_name, 'Evaluation: ' + str(correct) + ' correct, ' + str(wrong) + ' wrong, ' + str(accuracy))
+    logger.log_info(module_name, 'Evaluation m_dist: ' + str(m_dist))
+    logger.log_info(module_name, 'Evaluation b_dist: ' + str(b_dist))
 
 if __name__ == '__main__':
 
