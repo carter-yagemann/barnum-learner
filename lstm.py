@@ -10,6 +10,7 @@ import numpy as np
 import random
 from multiprocessing import cpu_count
 from datetime import datetime
+import traceback
 
 module_name = 'LSTM'
 
@@ -23,15 +24,14 @@ def build_model():
     """ Builds the LSTM model assuming two categories."""
     model = Sequential()
 
-    model.add(
-        LSTM(
-            options.units,
-            input_shape=(options.seq_len, 1),
-            return_sequences=False
-        )
-    )
+    model.add(Embedding(input_dim=2^64, output_dim=options.eo_dim, input_length=options.seq_len))
 
-    model.add(Dense(2, activation='softmax'))
+    for layer in range(options.hidden_layers):
+        model.add(LSTM(options.units, return_sequences=True))
+    model.add(LSTM(options.units))
+
+    model.add(Dense(max(32, options.units / 2), activation='relu'))
+    model.add(Dense(10, activation='softmax'))
 
     model.compile(loss='sparse_categorical_crossentropy',
                   optimizer='rmsprop',
@@ -80,7 +80,7 @@ def map_to_model(samples, f):
                 logger.log_info(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        xs.append([list([seq]) for seq in res[1]])
+        xs.append(res[1])
         ys.append(res[0])
 
         if len(ys) == options.batch_size:
@@ -108,7 +108,7 @@ def train_model():
                 model.save_weights(options.save_weights)
             except:
                 generator.stop_generator(10)
-                clean_exit(2, 'Failed to save LSTM weights')
+                clean_exit(2, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
             last_c = datetime.now()
     logger.log_debug(module_name, 'Training finished in ' + str(datetime.now() - start_time))
 
@@ -232,12 +232,16 @@ if __name__ == '__main__':
     parser_group_lstm = OptionGroup(parser, 'LSTM Options')
     parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=128,
                                  help='Length of sequences fed into LSTM (default: 128)')
-    parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=128,
-                                 help='Number of sequences per batch (default: 128)')
+    parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=256,
+                                 help='Number of sequences per batch (default: 256)')
     parser_group_lstm.add_option('-e', '--epochs', action='store', dest='epochs', type='int', default=1,
                                  help='Number of times to iterate over test sets (default: 1)')
-    parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=100,
-                                 help='Number of units to use in LSTM (default: 100)')
+    parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=128,
+                                 help='Number of units to use in LSTM (default: 128)')
+    parser_group_lstm.add_option('--embedding-dim', action='store', dest='eo_dim', type='int', default=1024,
+                                 help='Output dimension for the embedding layer (default: 1024)')
+    parser_group_lstm.add_option('--hidden-layers', action='store', dest='hidden_layers', type='int', default=0,
+                                 help='Number of hidden LSTM layers (default: 0)')
     parser_group_lstm.add_option('--save-model', action='store', dest='save_model', type='string', default='',
                                  help='Save the generated model to the provided filepath in JSON format')
     parser_group_lstm.add_option('--save-weights', action='store', dest='save_weights', type='string', default='',
@@ -259,8 +263,8 @@ if __name__ == '__main__':
         sys.exit(0)
 
     # Keras likes to print $@!& to stdout, so don't import it until after the input parameters have been validated
-    from keras.models import Sequential, model_from_json
-    from keras.layers import Dense, LSTM
+    from keras.models import Model, Sequential, model_from_json
+    from keras.layers import Dense, LSTM, Input, Embedding
     from keras import callbacks as cb
 
     root_dir = args[0]
@@ -312,6 +316,14 @@ if __name__ == '__main__':
 
     if options.checkpoint_interval > 0 and len(options.save_weights) < 1:
         logger.log_error(module_name, 'Checkpointing requires --save-weights')
+        errors = True
+
+    if options.eo_dim < 1:
+        logger.log_error(module_name, 'Embedding output dimension must be at least 1')
+        errors = True
+
+    if options.hidden_layers < 0:
+        logger.log_error(module_name, 'Hidden layers cannot be negative')
         errors = True
 
     if errors:
@@ -372,7 +384,7 @@ if __name__ == '__main__':
         try:
             model = build_model()
         except:
-            clean_exit(3, 'Error while building model!')
+            clean_exit(3, "Error while building model:\n" + str(traceback.format_exc()))
     else:
         logger.log_info(module_name, 'Restoring LSTM model from provided filepath')
         try:
@@ -390,7 +402,7 @@ if __name__ == '__main__':
             with open(options.save_model, 'w') as ofile:
                 ofile.write(model.to_json())
         except:
-            clean_exit(2, 'Failed to save LSTM model')
+            clean_exit(2, "Failed to save LSTM model:\n" + str(traceback.format_exc()))
 
     # Every trace is of the same program (Adobe Acrobat Reader), which loads the same
     # files, therefore we can build our encoding using any sample.
@@ -415,7 +427,7 @@ if __name__ == '__main__':
         try:
             model.save_weights(options.save_weights)
         except:
-            clean_exit(2, 'Failed to save LSTM weights')
+            clean_exit(2, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
 
     # Test model
     if not options.skip_test:
