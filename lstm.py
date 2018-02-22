@@ -33,8 +33,9 @@ def build_model():
     model.add(Dense(max(32, options.units / 2), activation='relu'))
     model.add(Dense(10, activation='softmax'))
 
+    opt = optimizers.RMSprop(lr=options.learning_rate)
     model.compile(loss='sparse_categorical_crossentropy',
-                  optimizer='rmsprop',
+                  optimizer=opt,
                   metrics=['sparse_categorical_accuracy'])
 
     return model
@@ -260,6 +261,8 @@ if __name__ == '__main__':
                                  help='Output dimension for the embedding layer (default: 1024)')
     parser_group_lstm.add_option('--hidden-layers', action='store', dest='hidden_layers', type='int', default=0,
                                  help='Number of hidden LSTM layers (default: 0)')
+    parser_group_lstm.add_option('--learning-rate', action='store', dest='learning_rate', type='float', default=0.01,
+                                 help='Learning rate for the RMSprop optimizer (default: 0.01)')
     parser_group_lstm.add_option('--save-model', action='store', dest='save_model', type='string', default='',
                                  help='Save the generated model to the provided filepath in JSON format')
     parser_group_lstm.add_option('--save-weights', action='store', dest='save_weights', type='string', default='',
@@ -284,6 +287,7 @@ if __name__ == '__main__':
     from keras.models import Model, Sequential, model_from_json
     from keras.layers import Dense, LSTM, Input, Embedding
     from keras import callbacks as cb
+    from keras import optimizers
 
     root_dir = args[0]
 

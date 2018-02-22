@@ -164,6 +164,12 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
     segment starts at address 0x0 and encoding shows 'foo.dll' unique ID is 1, the
     resulting unique value will be 0x0001000000001234.
 
+    In the case where an address doesn't map to a file, it is simply encoded as
+    0xFFFF000000000000 | address.
+
+    If the file doesn't map to an encoding, then a warning is logged because the encoding
+    is incomplete and the PT packet is skipped.
+
     Keyword arguments:
     filepath -- The path to a raw PT or gzipped raw PT file.
     memory -- A linear array of tuples in the form (start_address, end_address, source_file).
@@ -229,8 +235,7 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
 
             mapping = get_source_file(last_addr, memory)
             if mapping is None:
-                has_warned = warn_and_debug(has_warned, warning_msg,
-                        'Failed to find source file for address ' + hex(last_addr) + ' in ' + filepath)
+                yield 0xFFFF000000000000 | last_addr
                 continue
 
             value = get_encoding(mapping[2], last_addr - mapping[0], encoding)
@@ -246,8 +251,7 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
             tnts = parts[-1].strip()
             mapping = get_source_file(last_addr, memory)
             if mapping is None:
-                has_warned = warn_and_debug(has_warned, warning_msg,
-                        'Failed to find source file for address ' + hex(last_addr) + ' in ' + filepath)
+                yield 0xFFFF000000000000 | last_addr
                 continue
 
             value = get_encoding(mapping[2], 0, encoding)
