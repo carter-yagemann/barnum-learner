@@ -14,9 +14,17 @@ import traceback
 
 module_name = 'LSTM'
 
-def clean_exit(error_code, message):
+# Exit codes
+EXIT_INVALID_ARGS   = 1
+EXIT_UNIMPLEMENTED  = 2
+EXIT_RUNTIME_ERROR  = 3
+EXIT_USER_INTERRUPT = 4
+
+def clean_exit(error_code, message, kill_generator=False):
     """ Performs a clean exit, useful for when errors happen that can't be recovered from."""
     logger.log_critical(module_name, message)
+    if kill_generator:
+        generator.stop_generator(2)
     logger.log_stop()
     sys.exit(error_code)
 
@@ -115,7 +123,7 @@ def train_model():
                 model.save_weights(options.save_weights)
             except:
                 generator.stop_generator(10)
-                clean_exit(2, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
+                clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
             last_c = datetime.now()
     logger.log_debug(module_name, 'Training finished in ' + str(datetime.now() - start_time))
 
@@ -348,13 +356,13 @@ if __name__ == '__main__':
         errors = True
 
     if errors:
-        clean_exit(1, 'Failed to parse options')
+        clean_exit(EXIT_INVALID_ARGS, 'Failed to parse options')
 
     # Further initialization
     logger.log_info(module_name, 'Scanning ' + str(root_dir))
     fs = reader.parse_pt_dir(root_dir)
     if fs is None or len(fs) == 0:
-        clean_exit(1, 'Directory ' + str(root_dir) + ' does not contain the expected file layout')
+        clean_exit(EXIT_INVALID_ARGS, 'Directory ' + str(root_dir) + ' does not contain the expected file layout')
 
     benign = [x for x in fs if x['label'] == 'benign']
     malicious = [x for x in fs if x['label'] == 'malicious']
@@ -366,7 +374,7 @@ if __name__ == '__main__':
     # User has the option of providing an input file that tells us which samples to use.
     if len(options.input_sets) > 0:
         # TODO - Implement input_sets (-i)
-        clean_exit(2, '-i not implemented yet!')
+        clean_exit(EXIT_UNIMPLEMENTED, '-i not implemented yet!')
     # Otherwise, we're going to pick randomly based on train-size, test-size, and ratio.
     else:
         b_train_size = int(options.train_size * options.sample_ratio)
@@ -375,10 +383,10 @@ if __name__ == '__main__':
         m_test_size = options.test_size - b_test_size
 
         if len(benign) < b_train_size + b_test_size:
-            clean_exit(3, 'Not enough benign samples! Need ' + str(b_train_size + b_test_size) + ' have ' + str(len(benign)))
+            clean_exit(EXIT_RUNTIME_ERROR, 'Not enough benign samples! Need ' + str(b_train_size + b_test_size) + ' have ' + str(len(benign)))
 
         if len(malicious) < m_train_size + m_test_size:
-            clean_exit(3, 'Not enough malicious samples! Need ' + str(m_train_size + m_test_size) + ' have ' + str(len(malicious)))
+            clean_exit(EXIT_RUNTIME_ERROR, 'Not enough malicious samples! Need ' + str(m_train_size + m_test_size) + ' have ' + str(len(malicious)))
 
         random.seed() # We don't need a secure random shuffle, so this is good enough
         random.shuffle(benign)
@@ -397,7 +405,7 @@ if __name__ == '__main__':
 
     if len(options.output_sets) > 0:
         # TODO - Implement output_sets (-o)
-        clean_exit(2, '-o not implemented yet!')
+        clean_exit(EXIT_UNIMPLEMENTED, '-o not implemented yet!')
 
     # Build model if user didn't provide one
     if len(options.use_model) == 0:
@@ -405,7 +413,7 @@ if __name__ == '__main__':
         try:
             model = build_model()
         except:
-            clean_exit(3, "Error while building model:\n" + str(traceback.format_exc()))
+            clean_exit(EXIT_RUNTIME_ERROR, "Error while building model:\n" + str(traceback.format_exc()))
     else:
         logger.log_info(module_name, 'Restoring LSTM model from provided filepath')
         try:
@@ -415,7 +423,7 @@ if __name__ == '__main__':
                           optimizer='rmsprop',
                           metrics=['sparse_categorical_accuracy'])
         except:
-            clean_exit(3, 'Failed to load model from JSON file')
+            clean_exit(EXIT_RUNTIME_ERROR, 'Failed to load model from JSON file')
 
     if len(options.save_model) > 0:
         try:
@@ -423,44 +431,59 @@ if __name__ == '__main__':
             with open(options.save_model, 'w') as ofile:
                 ofile.write(model.to_json())
         except:
-            clean_exit(2, "Failed to save LSTM model:\n" + str(traceback.format_exc()))
+            clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM model:\n" + str(traceback.format_exc()))
 
     # Every trace is of the same program (Adobe Acrobat Reader), which loads the same
     # files, therefore we can build our encoding using any sample.
     try:
         encoding = reader.encoding_from_memory(reader.read_memory_file(fs[0]['mapping_filepath']))
     except:
-        clean_exit(3, 'Failed to create encoding! Tried using ' + fs[0]['mapping_filepath'])
+        clean_exit(EXIT_RUNTIME_ERROR, 'Failed to create encoding! Tried using ' + fs[0]['mapping_filepath'])
 
     # Train model if user didn't already provide weights
     if len(options.use_weights) == 0:
         for epoch in range(options.epochs):
             logger.log_info(module_name, 'Starting training epoch ' + str(epoch + 1))
-            train_model()
+            try:
+                train_model()
+            except KeyboardInterrupt:
+                clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
+            except:
+                clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
     else:
         logger.log_info(module_name, 'Restoring LSTM weights from provided filepath')
         try:
             model.load_weights(options.use_weights)
         except:
-            clean_exit(3, 'Failed to load weights from file')
+            clean_exit(EXIT_RUNTIME_ERROR, 'Failed to load weights from file')
 
     if len(options.save_weights) > 0:
         try:
             model.save_weights(options.save_weights)
         except:
-            clean_exit(2, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
+            clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
 
     # Test model
     if not options.skip_test:
         logger.log_info(module_name, 'Starting testing')
-        test_model()
+        try:
+            test_model()
+        except KeyboardInterrupt:
+            clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
+        except:
+            clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
     else:
         logger.log_info(module_name, 'Skipping testing')
 
     # Evaluating model
     if not options.skip_eval:
         logger.log_info(module_name, 'Starting evaluation')
-        eval_model()
+        try:
+            eval_model()
+        except KeyboardInterrupt:
+            clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
+        except:
+            clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
     else:
         logger.log_info(module_name, 'Skipping evaluation')
 

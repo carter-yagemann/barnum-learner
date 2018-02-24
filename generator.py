@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 import traceback
 from copy import deepcopy
+from time import sleep
 
 module_name = 'Generator'
 
@@ -60,7 +61,7 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, sliding_
 
     return (job_queue, res_queue)
 
-def stop_generator(timeout=None):
+def stop_generator(timeout=10):
     global module_name
     global gen_workers
     global running
@@ -69,11 +70,14 @@ def stop_generator(timeout=None):
     # Signal workers that there's no more jobs coming
     running.value = False
     for worker in gen_workers:
-        try:
-            worker.join(timeout)
-        except:
-            logger.log_warning(module_name, 'Timeout to join worker exceeded, forcefully terminating')
-            worker.terminate()
+        if worker.is_alive():
+            for sec in range(timeout):
+                sleep(1)
+                if not worker.is_alive():
+                    continue
+            if worker.is_alive():
+                logger.log_debug(module_name, 'Timeout to join worker exceeded, forcefully terminating')
+                worker.terminate()
     gen_workers = []
     in_service = []
 
@@ -141,6 +145,8 @@ def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1, sl
                     seq.pop(0)
                     seq.append(output)
                     res_queue.put([job[0], deepcopy(seq)])
+        except KeyboardInterrupt:
+            pass
         except:
             logger.log_error(module_name, 'Error while processing job in worker ' + str(m_pid) + "\n" + str(traceback.format_exc()))
 
