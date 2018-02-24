@@ -226,6 +226,8 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
         parts = line.split(' ')
         packet_type = parts[0]
         if packet_type == 'tip':
+            if parts[-1].strip() == '<suppressed>':
+                continue
             try:
                 last_addr = int(parts[-1], 16)
             except:
