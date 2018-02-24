@@ -24,11 +24,17 @@ def build_model():
     """ Builds the LSTM model assuming two categories."""
     model = Sequential()
 
-    model.add(Embedding(input_dim=2^64, output_dim=options.eo_dim, input_length=options.seq_len))
-
+    first_lstm = True
     for layer in range(options.hidden_layers):
-        model.add(LSTM(options.units, return_sequences=True))
-    model.add(LSTM(options.units))
+        if first_lstm:
+            model.add(LSTM(options.units, input_shape=(options.seq_len, 1), return_sequences=True))
+            first_lstm = False
+        else:
+            model.add(LSTM(options.units, return_sequences=True))
+    if first_lstm:
+        model.add(LSTM(options.units, input_shape=(options.seq_len, 1)))
+    else:
+        model.add(LSTM(options.units))
 
     model.add(Dense(max(32, options.units / 2), activation='relu'))
     model.add(Dense(10, activation='softmax'))
@@ -81,7 +87,7 @@ def map_to_model(samples, f):
                 logger.log_info(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        xs.append(res[1])
+        xs.append([list([seq]) for seq in res[1]])
         ys.append(res[0])
 
         if len(ys) == options.batch_size:
@@ -175,7 +181,7 @@ def eval_model():
                 logger.log_info(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        xs.append(res[1])
+        xs.append([list([seq]) for seq in res[1]])
         ss.append(res[0])
 
         if len(ss) == options.batch_size:
@@ -257,8 +263,6 @@ if __name__ == '__main__':
                                  help='Number of times to iterate over test sets (default: 1)')
     parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=128,
                                  help='Number of units to use in LSTM (default: 128)')
-    parser_group_lstm.add_option('--embedding-dim', action='store', dest='eo_dim', type='int', default=1024,
-                                 help='Output dimension for the embedding layer (default: 1024)')
     parser_group_lstm.add_option('--hidden-layers', action='store', dest='hidden_layers', type='int', default=0,
                                  help='Number of hidden LSTM layers (default: 0)')
     parser_group_lstm.add_option('--learning-rate', action='store', dest='learning_rate', type='float', default=0.01,
@@ -285,8 +289,7 @@ if __name__ == '__main__':
 
     # Keras likes to print $@!& to stdout, so don't import it until after the input parameters have been validated
     from keras.models import Model, Sequential, model_from_json
-    from keras.layers import Dense, LSTM, Input, Embedding
-    from keras import callbacks as cb
+    from keras.layers import Dense, LSTM
     from keras import optimizers
 
     root_dir = args[0]
@@ -338,10 +341,6 @@ if __name__ == '__main__':
 
     if options.checkpoint_interval > 0 and len(options.save_weights) < 1:
         logger.log_error(module_name, 'Checkpointing requires --save-weights')
-        errors = True
-
-    if options.eo_dim < 1:
-        logger.log_error(module_name, 'Embedding output dimension must be at least 1')
         errors = True
 
     if options.hidden_layers < 0:
