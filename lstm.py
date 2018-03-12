@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import sys
+from os import path
 import logger
 import logging
 import reader
@@ -28,24 +29,65 @@ def clean_exit(error_code, message, kill_generator=False):
     logger.log_stop()
     sys.exit(error_code)
 
+def save_sets():
+    try:
+        with open(options.output_sets, 'w') as ofile:
+            for key in sets_meta:
+                ofile.write('[' + str(key) + "]\n") # Header
+                for item in sets_meta[key]:
+                    ofile.write(item['base_dir'] + "\n")
+    except:
+        logger.log_error(module_name, "Failed to save sets to " + str(options.output_sets))
+
+def load_sets():
+    if not path.isfile(options.input_sets):
+        clean_exit(EXIT_INVALID_ARGS, "Cannot find file " + str(options.input_sets))
+
+    set_key = None
+
+    try:
+        with open(options.input_sets, 'r') as ifile:
+            for line in ifile:
+                line = line.rstrip()
+                if len(line) < 1:
+                    continue
+                if line[0] == '[':
+                    set_key = line[1:-1]
+                else:
+                    # Line should be the path to a trace directory
+                    if not root_dir in line:
+                        logger.log_warning(module_name, 'Input data specified with -i must be in ' + str(root_dir) + ', skipping')
+                        continue
+                    if not path.isdir(line):
+                        logger.log_warning(module_name, 'Cannot find directory ' + str(line) + ' to load data from, skipping')
+                        continue
+                    matches = [record for record in fs if record['base_dir'] == line]
+                    if len(matches) < 1:
+                        logger.log_warning(module_name, 'Could not find data in directory ' + str(line) + ', skipping')
+                        continue
+                    sets_meta[set_key].append(matches[0])
+    except:
+        clean_exit(EXIT_RUNTIME_ERROR, "Failed to load sets from " + str(options.input_sets))
+
 def build_model():
     """ Builds the LSTM model assuming two categories."""
     model = Sequential()
 
-    first_lstm = True
-    for layer in range(options.hidden_layers):
-        if first_lstm:
-            model.add(LSTM(options.units, input_shape=(options.seq_len, 1), return_sequences=True))
-            first_lstm = False
-        else:
-            model.add(LSTM(options.units, return_sequences=True))
-    if first_lstm:
-        model.add(LSTM(options.units, input_shape=(options.seq_len, 1)))
-    else:
-        model.add(LSTM(options.units))
+    model.add(Embedding(input_dim=options.embedding_in_dim,
+                        output_dim=options.embedding_out_dim,
+                        input_length=options.seq_len))
 
-    model.add(Dense(max(32, options.units / 2), activation='relu'))
-    model.add(Dense(10, activation='softmax'))
+    for layer in range(options.hidden_layers):
+        model.add(LSTM(options.units, return_sequences=True))
+    model.add(LSTM(options.units))
+
+    model.add(Dense(128))
+    model.add(Activation('relu'))
+
+    model.add(Dropout(options.dropout))
+
+    model.add(Dense(options.units, name='logits'))
+    model.add(Activation('softmax'))
 
     opt = optimizers.RMSprop(lr=options.learning_rate)
     model.compile(loss='sparse_categorical_crossentropy',
@@ -61,25 +103,16 @@ def map_to_model(samples, f):
     threads = min(options.threads, len(samples))
 
     # When you gonna fire it up? When you gonna fire it up?
-    iqueue, oqueue = generator.start_generator(threads, reader.read_pt_file, options.queue_size,
-                                               options.seq_len, not options.no_sw)
+    iqueue, oqueue = generator.start_generator(threads, reader.disasm_pt_file, options.queue_size, options.seq_len)
 
     for sample in samples:
-        if sample['label'] == 'malicious':
-            sample_label = 1
-        elif sample['label'] == 'benign':
-            sample_label = 0
-        else:
-            logger.log_warning(module_name, 'Unknown label `' + str(sample['label']) + '`, skipping')
-            continue
-
         sample_memory = reader.read_memory_file(sample['mapping_filepath'])
 
         if sample_memory is None:
             logger.log_warning(module_name, 'Failed to parse memory file, skipping')
             continue
 
-        iqueue.put((sample_label, sample['trace_filepath'], sample_memory, encoding, options.tip_only))
+        iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
 
     # Get parsed sequences and feed them to the LSTM model
     xs = []
@@ -95,8 +128,11 @@ def map_to_model(samples, f):
                 logger.log_info(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        xs.append([list([seq]) for seq in res[1]])
-        ys.append(res[0])
+        # Xs cannot exceed embedding input dimension
+        # Number of labels (Ys) cannot exceed number of units in first LSTM layer
+        # TODO - Better encoding schemes
+        xs.append([x % options.embedding_in_dim for x in res[1][1:]])
+        ys.append(res[1][0] % options.units)
 
         if len(ys) == options.batch_size:
             yield f(np.array(xs), np.array(ys))
@@ -108,15 +144,19 @@ def map_to_model(samples, f):
     while True:
         yield None
 
-def train_model():
+def train_model(training_set):
     """ Trains the LSTM model."""
-    training_set = sets_meta['b_train'] + sets_meta['m_train']
     start_time = datetime.now()
     freq_c = options.checkpoint_interval * 60
     last_c = datetime.now()
+    res = [0.0] * len(model.metrics_names)
+    batches = 0
     for status in map_to_model(training_set, model.train_on_batch):
         if status is None:
             break
+        for stat in range(len(status)):
+            res[stat] += status[stat]
+        batches += 1
         if freq_c > 0 and (datetime.now() - last_c).total_seconds() > freq_c:
             logger.log_debug(module_name, 'Checkpointing weights')
             try:
@@ -125,13 +165,21 @@ def train_model():
                 generator.stop_generator(10)
                 clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
             last_c = datetime.now()
+
+    if batches < 1:
+        logger.log_warning(module_name, 'Testing set did not generate a full batch of data, cannot test')
+        return
+
+    for stat in range(len(res)):
+        res[stat] /= batches
+
+    logger.log_info(module_name, 'Results: ' + ', '.join([str(model.metrics_names[x]) + ' ' + str(res[x]) for x in range(len(res))]))
     logger.log_debug(module_name, 'Training finished in ' + str(datetime.now() - start_time))
 
-def test_model():
+def test_model(testing_set):
     """ Test the LSTM model."""
     res = [0.0] * len(model.metrics_names)
     batches = 0
-    testing_set = sets_meta['b_test'] + sets_meta['m_test']
 
     for status in map_to_model(testing_set, model.test_on_batch):
         if status is None:
@@ -151,86 +199,14 @@ def test_model():
 
 def eval_model():
     """ Evaluate the LSTM model."""
-    samples = sets_meta['b_test'] + sets_meta['m_test']
-    random.shuffle(samples)
-
-    # Used for statistics
-    m_dist = [0] * 10
-    b_dist = [0] * 10
-
-    # There's no point spinning up more worker threads than there are samples
-    threads = min(options.threads, len(samples))
-
-    iqueue, oqueue = generator.start_generator(threads, reader.read_pt_file, options.queue_size,
-                                               options.seq_len, not options.no_sw)
-
-    for idx in range(len(samples)):
-        sample = samples[idx]
-        sample['guess'] = 'benign'
-        sample_memory = reader.read_memory_file(sample['mapping_filepath'])
-
-        if sample_memory is None:
-            logger.log_warning(module_name, 'Failed to parse memory file, skipping')
-            continue
-
-        iqueue.put((idx, sample['trace_filepath'], sample_memory, encoding, options.tip_only))
-
-    # Get parsed sequences and feed them to the LSTM model
-    xs = []
-    ss = []
-    while True:
-        try:
-            res = oqueue.get(True, 5)
-        except:
-            in_service = generator.get_in_service()
-            if in_service == 0:
-                break
-            else:
-                logger.log_info(module_name, str(in_service) + ' workers still working on jobs')
-                continue
-
-        xs.append([list([seq]) for seq in res[1]])
-        ss.append(res[0])
-
-        if len(ss) == options.batch_size:
-            ps = model.predict_on_batch(np.array(xs))
-            for idx in range(len(ps)):
-                if ps[idx][1] > options.eval_threshold:
-                    samples[ss[idx]]['guess'] = 'malicious'
-                # Update distributions for statistical reporting
-                if ps[idx][1] == 1: # 100% confidence is unlikely, but possible
-                    offset = 9
-                else:
-                    offset = int(ps[idx][1] * 10)
-                assert offset >= 0 and offset < 10
-                if samples[ss[idx]]['label'] == 'malicious':
-                    m_dist[offset] += 1
-                else:
-                    b_dist[offset] += 1
-
-            xs = []
-            ss = []
-
-    generator.stop_generator(10)
-
-    correct = 0
-    wrong = 0
-    for sample in samples:
-        logger.log_debug(module_name, 'Guessed ' + str(sample['guess']) +  ', was ' + str(sample['label']))
-        if sample['label'] == sample['guess']:
-            correct += 1
-        else:
-            wrong += 1
-    accuracy = float(correct) / float(correct + wrong)
-
-    logger.log_info(module_name, 'Evaluation: ' + str(correct) + ' correct, ' + str(wrong) + ' wrong, ' + str(accuracy))
-    logger.log_info(module_name, 'Evaluation m_dist: ' + str(m_dist))
-    logger.log_info(module_name, 'Evaluation b_dist: ' + str(b_dist))
+    logger.log_error(module_name, 'Evaluation not implemented')
+    # TODO - How do we go from predictions and mis-predictions to binary classification of benign verses anomalous?
+    return
 
 if __name__ == '__main__':
 
     # Parse input arguments
-    parser = OptionParser(usage='Usage: %prog [options] directory')
+    parser = OptionParser(usage='Usage: %prog [options] pt_directory bin_directory')
 
     parser_group_sys = OptionGroup(parser, 'System Options')
     parser_group_sys.add_option('-l', '--logging', action='store', dest='log_level', type='int', default=20,
@@ -240,13 +216,9 @@ if __name__ == '__main__':
     parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32768,
                                 help='Size of the results queue, making this too large may exhaust memory (default 32768)')
     parser_group_sys.add_option('--skip-test', action='store_true', dest='skip_test',
-                                help='Skip the testing stage, useful when combined with saving to just make and store a model')
+                                help='Skip the generalization testing stage, useful when combined with saving to just make and store a model')
     parser_group_sys.add_option('--skip-eval', action='store_true', dest='skip_eval',
                                 help='Skip the evaluation stage, useful when combined with saving to just make and store a model')
-    parser_group_sys.add_option('--no-sliding-window', action='store_true', dest='no_sw',
-                                help='Do not use sliding window, which will result in less sequences being generated')
-    parser_group_sys.add_option('--tip-only', action='store_true', dest='tip_only',
-                                help='Only generate sequences from TIP packets, which will result in less sequences being generated')
     parser.add_option_group(parser_group_sys)
 
     parser_group_data = OptionGroup(parser, 'Data Options')
@@ -263,8 +235,8 @@ if __name__ == '__main__':
     parser.add_option_group(parser_group_data)
 
     parser_group_lstm = OptionGroup(parser, 'LSTM Options')
-    parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=128,
-                                 help='Length of sequences fed into LSTM (default: 128)')
+    parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=8,
+                                 help='Length of sequences fed into LSTM (default: 8)')
     parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=256,
                                  help='Number of sequences per batch (default: 256)')
     parser_group_lstm.add_option('-e', '--epochs', action='store', dest='epochs', type='int', default=1,
@@ -273,6 +245,12 @@ if __name__ == '__main__':
                                  help='Number of units to use in LSTM (default: 128)')
     parser_group_lstm.add_option('--hidden-layers', action='store', dest='hidden_layers', type='int', default=0,
                                  help='Number of hidden LSTM layers (default: 0)')
+    parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=10240,
+                                 help='The input dimension of the embedding layer (default: 10240)')
+    parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=256,
+                                 help='The output dimension of the embedding layer (default: 256)')
+    parser_group_lstm.add_option('--dropout', action='store', dest='dropout', type='float', default=0.5,
+                                 help='The dropout rate in the dense layer (default: 0.5)')
     parser_group_lstm.add_option('--learning-rate', action='store', dest='learning_rate', type='float', default=0.01,
                                  help='Learning rate for the RMSprop optimizer (default: 0.01)')
     parser_group_lstm.add_option('--save-model', action='store', dest='save_model', type='string', default='',
@@ -291,22 +269,27 @@ if __name__ == '__main__':
 
     options, args = parser.parse_args()
 
-    if len(args) < 1:
+    if len(args) < 2:
         parser.print_help()
         sys.exit(0)
 
     # Keras likes to print $@!& to stdout, so don't import it until after the input parameters have been validated
     from keras.models import Model, Sequential, model_from_json
-    from keras.layers import Dense, LSTM
+    from keras.layers import Dense, LSTM, Embedding, Activation, Dropout
     from keras import optimizers
 
     root_dir = args[0]
+    bin_dirpath = args[1]
 
     # Initialization
     logger.log_start(options.log_level)
 
     # Input validation
     errors = False
+    if not path.isdir(bin_dirpath):
+        logger.log_error(module_Name, 'bin_directory must be a directory')
+        errors = True
+
     if options.threads < 1:
         logger.log_error(module_name, 'Parsing requires at least 1 thread')
         errors = True
@@ -343,6 +326,18 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'LSTM must have at least 1 unit')
         errors = True
 
+    if options.embedding_in_dim < 1:
+        logger.log_error(module_name, 'Embedding input dimension must be at least 1')
+        errors = True
+
+    if options.embedding_out_dim < 1:
+        logger.log_error(module_name, 'Embedding output dimension must be at least 1')
+        errors = True
+
+    if options.dropout < 0 or options.dropout >= 1:
+        logger.log_error(module_name, 'Dropout rate must be in range [0, 1)')
+        errors = True
+
     if options.checkpoint_interval < 0:
         logger.log_error(module_name, 'Checkpoint interval cannot be negative')
         errors = True
@@ -369,24 +364,22 @@ if __name__ == '__main__':
 
     logger.log_info(module_name, 'Found ' + str(len(benign)) + ' benign traces and ' + str(len(malicious)) + ' malicious traces')
 
-    sets_meta = {'m_train': [], 'b_train': [], 'm_test': [], 'b_test': []}
+    sets_meta = {'b_train': [], 'm_test': [], 'b_test': []}
 
     # User has the option of providing an input file that tells us which samples to use.
     if len(options.input_sets) > 0:
-        # TODO - Implement input_sets (-i)
-        clean_exit(EXIT_UNIMPLEMENTED, '-i not implemented yet!')
+        load_sets()
     # Otherwise, we're going to pick randomly based on train-size, test-size, and ratio.
     else:
-        b_train_size = int(options.train_size * options.sample_ratio)
+        b_train_size = int(options.train_size)
         b_test_size = int(options.test_size * options.sample_ratio)
-        m_train_size = options.train_size - b_train_size
         m_test_size = options.test_size - b_test_size
 
         if len(benign) < b_train_size + b_test_size:
             clean_exit(EXIT_RUNTIME_ERROR, 'Not enough benign samples! Need ' + str(b_train_size + b_test_size) + ' have ' + str(len(benign)))
 
-        if len(malicious) < m_train_size + m_test_size:
-            clean_exit(EXIT_RUNTIME_ERROR, 'Not enough malicious samples! Need ' + str(m_train_size + m_test_size) + ' have ' + str(len(malicious)))
+        if len(malicious) < m_test_size:
+            clean_exit(EXIT_RUNTIME_ERROR, 'Not enough malicious samples! Need ' + str(m_test_size) + ' have ' + str(len(malicious)))
 
         random.seed() # We don't need a secure random shuffle, so this is good enough
         random.shuffle(benign)
@@ -396,16 +389,13 @@ if __name__ == '__main__':
             sets_meta['b_train'] = benign[:b_train_size]
         if b_test_size > 0:
             sets_meta['b_test'] = benign[-b_test_size:]
-        if m_train_size > 0:
-            sets_meta['m_train'] = malicious[:m_train_size]
         if m_test_size > 0:
             sets_meta['m_test'] = malicious[-m_test_size:]
 
     logger.log_info(module_name, 'Selected ' + ', '.join([str(len(sets_meta[x])) + ' ' +  str(x) for x in sets_meta.keys()]))
 
     if len(options.output_sets) > 0:
-        # TODO - Implement output_sets (-o)
-        clean_exit(EXIT_UNIMPLEMENTED, '-o not implemented yet!')
+        save_sets()
 
     # Build model if user didn't provide one
     if len(options.use_model) == 0:
@@ -433,19 +423,15 @@ if __name__ == '__main__':
         except:
             clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM model:\n" + str(traceback.format_exc()))
 
-    # Every trace is of the same program (Adobe Acrobat Reader), which loads the same
-    # files, therefore we can build our encoding using any sample.
-    try:
-        encoding = reader.encoding_from_memory(reader.read_memory_file(fs[0]['mapping_filepath']))
-    except:
-        clean_exit(EXIT_RUNTIME_ERROR, 'Failed to create encoding! Tried using ' + fs[0]['mapping_filepath'])
+    # Initialize BBIDs mapping
+    bbids_mgr = reader.init_bbids()
 
     # Train model if user didn't already provide weights
     if len(options.use_weights) == 0:
         for epoch in range(options.epochs):
             logger.log_info(module_name, 'Starting training epoch ' + str(epoch + 1))
             try:
-                train_model()
+                train_model(sets_meta['b_train'])
             except KeyboardInterrupt:
                 clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
             except:
@@ -467,7 +453,7 @@ if __name__ == '__main__':
     if not options.skip_test:
         logger.log_info(module_name, 'Starting testing')
         try:
-            test_model()
+            test_model(sets_meta['b_test'])
         except KeyboardInterrupt:
             clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
         except:

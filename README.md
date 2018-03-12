@@ -5,6 +5,14 @@ documentation for more details. Then, install requirements:
 
     pip install -r requirements.txt
 
+Additionally, this code requires the program `ptxed`, which is included in
+the [libipt](https://github.com/01org/processor-trace) source code repo.
+This can either be installed from source or using the following APT repo
+maintained by the main author of this project:
+
+    sh -c "$(wget -qO - https://super.gtisc.gatech.edu/libipt.sh)"
+    sudo apt-get install ptxed
+
 # Usage
 
 See `./lstm.py --help` for options and usage.
@@ -41,15 +49,25 @@ You can then run your testing and/or evaluation without needing to retrain:
 
 ## Performance
 
-By default, the system will use a sliding window to generate sequences using
-TIP and TNT packets from the trace. This is great for accuracy, but also very
-slow. A sliding window generates about 10 times more sequences than chunking
-and most traces are 80% to 95% TNT packets. The system can be configured to
-only read TIP packets using the flag `--tip-only` and sliding window can be
-changed to chunking with `--no-sliding-window`.
+If you're using a GPU enabled framework, adjusting the batch size (`-b`) can
+significantly improve performance.
 
-Additionally, if you're using a GPU enabled framework, adjusting the batch size
-(`-b`) can significantly improve performance.
+## Reusing Previous Sets
+
+By default, the system will randomly pick traces to create the training, test,
+and evaluation sets. However, sometimes it's useful to reuse the sets picked
+in a previous session (i.e., to compare different model settings). The selected
+sets can be saved using the `-o` flag:
+
+    ./lstm.py -o sets/my_sets.txt [... other args ...]
+
+And reused in future sessions using the `-i` flag:
+
+    ./lstm.py -i sets/my_sets.txt [... other args ...]
+
+Note that even when using `-i`, you must still provide the system with the
+correct root PT directory argument. Directories listed in the save file
+that are outside the provided root PT directory will be skipped.
 
 # Development
 
@@ -58,7 +76,7 @@ developers get started. The main files are `reader.py`, `generator.py`, and
 `lstm.py`.
 
 The reader's job is to handle scanning the filesystem for samples and parsing
-PT traces and memory layouts. This is the lowest level code in the probject.
+PT traces and memory layouts. This is the lowest level code in the project.
 
 The generator's job is to synchronize multiple readers (for performance) and
 group their results into sequences (more generally referred to as "samples" in

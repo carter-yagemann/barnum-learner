@@ -15,7 +15,7 @@ gen_workers = []
 in_service = []
 running = Value('b', False)
 
-def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, sliding_window=True):
+def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
     """ Starts up a generator for dispatching jobs to the target function.
 
     Once started, arrays of arguments (jobs) can be appended to the job queue and the
@@ -35,18 +35,13 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, sliding_
     num_workers -- The number of workers to spawn for processing jobs.
     target -- The function to invoke.
     res_queue_max -- The max size of the results queue. Once full, workers will wait for space.
-    seq_len -- target is assumed to be a generator function, so workers will combine seq_len yielded
+    seq_len -- Target is assumed to be a generator function, so workers will combine seq_len yielded
     values into an array before placing it on the results queue.
-    sliding_window -- Use sliding window. See worker_loop for more details.
 
     Returns:
     A queue for submitting jobs (job_queue) and a queue for getting results (res_queue).
     """
-    global job_queue
-    global res_queue
-    global gen_workers
-    global running
-    global in_service
+    global job_queue, res_queue, gen_workers, running, in_service
 
     # Initialize queues and spawn workers
     job_queue = Queue()
@@ -54,8 +49,8 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, sliding_
     running.value = True
     for id in range(num_workers):
         in_service.append(Value('b', False))
-        worker = Process(target=worker_loop, args=(target, job_queue, res_queue, running, in_service[id],
-                                                   int(seq_len), sliding_window))
+        worker_args = (target, job_queue, res_queue, running, in_service[id], int(seq_len))
+        worker = Process(target=worker_loop, args=worker_args)
         gen_workers.append(worker)
         worker.start()
 
@@ -91,20 +86,14 @@ def get_in_service():
 
     return count
 
-def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1, sliding_window=True):
+def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1):
     """ Main worker loop, gets data from the target generator and chunks it into sequences.
 
-    By default, sequences are generated in a sliding window fashion. For example, if the data is
+    Sequences are generated in a sliding window fashion. For example, if the data is
     A, B, C, D, and seq_len is 2, the worker will yield:
 
         A, B
         B, C
-        C, D
-        ...
-
-    If sliding_window is False, then the generated sequences would be:
-
-        A, B
         C, D
         ...
     """
@@ -135,16 +124,18 @@ def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1, sl
 
                 curr_size = len(seq)      # Sequence generation
                 if curr_size < (seq_len - 1):
-                    seq.append(output)
+                    seq.append(output[0])
                 elif curr_size == (seq_len - 1):
-                    seq.append(output)
-                    res_queue.put([job[0], deepcopy(seq)])
-                    if not sliding_window:
-                        seq = []
+                    seq.append(output[0])
+                    # We only want to send sequences that end in an indirect control flow transfer
+                    if output[2] == 'ret':
+                        res_queue.put([job[0], deepcopy([output[1]] + seq)])
                 else:
                     seq.pop(0)
-                    seq.append(output)
-                    res_queue.put([job[0], deepcopy(seq)])
+                    seq.append(output[0])
+                    # We only want to send sequences that end in an indirect control flow transfer
+                    if output[2] == 'ret':
+                        res_queue.put([job[0], deepcopy([output[1]] + seq)])
         except KeyboardInterrupt:
             pass
         except:
@@ -159,7 +150,7 @@ def test_generator():
     import tempfile
 
     if len(argv) < 4:
-        print argv[0], '<input_file>', '<memory_file>', '<seq_len>'
+        print argv[0], '<input_file>', '<bin_dir>', '<memory_file>', '<seq_len>'
         exit(0)
 
     logger.log_start(logging.DEBUG)
@@ -168,12 +159,11 @@ def test_generator():
         ofile = tempfile.mkstemp(text=True)
         ofilefd = os.fdopen(ofile[0], 'w')
 
-        memory = reader.read_memory_file(argv[2])
-        encoding = reader.encoding_from_memory(memory)
-        label = 0 # Just an arbitrary label for testing functionality
+        memory = reader.read_memory_file(argv[3])
+        bbids_mgr = reader.init_bbids()
 
-        input, output = start_generator(2, reader.read_pt_file, seq_len=int(argv[3], 10))
-        input.put((label, argv[1], memory, encoding))
+        input, output = start_generator(2, reader.disasm_pt_file, seq_len=int(argv[4], 10))
+        input.put((None, argv[1], argv[2], memory))
         while True:
             try:
                 res = output.get(True, 5)
@@ -184,7 +174,7 @@ def test_generator():
                 else:
                     logger.log_debug(module_name, str(count) + ' workers still working on jobs')
                     continue
-            ofilefd.write(str(res[0]) + ": " + str([hex(x) for x in res[1]]) + "\n")
+            ofilefd.write(str(res[0]) + ": " + str(res[1]) + "\n")
 
         stop_generator(10)
         ofilefd.close()

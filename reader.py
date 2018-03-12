@@ -9,6 +9,7 @@ import gzip
 import subprocess
 from datetime import datetime
 import shutil
+from multiprocessing import Manager, Value
 
 module_name = 'Reader'
 
@@ -71,7 +72,7 @@ def parse_pt_dir(root):
 
 def read_memory_file(filepath):
     """ Reads a memory file (may be gzipped) and produces an array that can be passed to
-        read_pt_file() as the memory argument.
+        disasm_pt_file() as the mem_map argument.
     """
     if type(filepath) != str:
         logger.log_error(module_name, "Parameter filepath must be a string")
@@ -112,32 +113,38 @@ def read_memory_file(filepath):
 
     return final_res
 
-def encoding_from_memory(memory):
-    """ Generates an encoding based on a memory mapping produced by read_memory_file().
-    """
-    start_time = datetime.now()
-    res = []
-    for tuple in memory:
-        name = tuple[2]
-        if not name in res:
-            res.append(name)
-    delta_time = datetime.now() - start_time
-    logger.log_debug(module_name, 'Generated encoding from memory in ' + str(delta_time))
-    return res
-
 def get_source_file(addr, memory):
     for tuple in memory:
         if addr >= tuple[0] and addr <= tuple[1]:
             return tuple
     return None
 
-def get_encoding(source_filename, offset, encoding):
-    try:
-        high_bits = encoding.index(source_filename)
-        low_bits = offset
-        return (high_bits << 48) | low_bits
-    except:
-        return None
+def init_bbids():
+    """ Returns a BBIDs manager. After calling this method, methods like disasm_pt_file() can be called."""
+    global bbids
+    mgr = Manager()
+    bbids = {'dict': mgr.dict(), 'cnt': Value('i', 0)}
+    return mgr
+
+def get_bbid(addr, mem_map, bbids):
+    """ Normalizes the destination address using the memory mapping and then converts
+        it into a unique BBID.
+
+    Keyword arguments:
+    addr -- Address to get the BBID for.
+    mem_map -- A linear array of tuples in the form (start_address, end_address, source_file).
+    bbids -- See init_bbids().
+    """
+    map = get_source_file(addr, mem_map)
+    if map is None:
+        return None # Failed to find memory region this address belongs to
+    offset = str(addr - map[0])
+    key = map[2] + offset
+    if not key in bbids['dict']:
+        with bbids['cnt'].get_lock():
+            bbids['cnt'].value += 1
+            bbids['dict'][key] = bbids['cnt'].value
+    return bbids['dict'][key]
 
 def warn_and_debug(has_warned, warning, debug):
     """ Prints a debug message and also generates a generic warning message if one hasn't
@@ -153,155 +160,113 @@ def warn_and_debug(has_warned, warning, debug):
 
     return has_warned
 
-def read_pt_file(filepath, memory, encoding, tip_only=False):
-    """ Reads a file located at filepath and yields values that are normalized based on
-        the provided encoding. Specifically, each address is compared against memory to
-        find the source file it belongs to and then that source file is compared against
-        encoding to produce a unique value where the upper 16 bits are a unique ID for
-        the file and the lower 48 bits are the offset within that file.
+def disasm_pt_file(trace_path, bin_path, mem_map):
+    """ Disassembles a PT trace into instructions and yields (source BBID, target BBID, transfer instruction).
 
-    For example, if memory shows address 0x1234 belongs to file 'foo.dll' and its memory
-    segment starts at address 0x0 and encoding shows 'foo.dll' unique ID is 1, the
-    resulting unique value will be 0x0001000000001234.
-
-    In the case where an address doesn't map to a file, it is simply encoded as
-    0xFFFF000000000000 | address.
-
-    If the file doesn't map to an encoding, then a warning is logged because the encoding
-    is incomplete and the PT packet is skipped.
+    Source BBID is the BB from which a transfer is happening.
+    Target BBID is the BB the transfer ends up in.
+    Transfer instruction is the instruction that causes the transfer from source to target (e.g., ret).
 
     Keyword arguments:
-    filepath -- The path to a raw PT or gzipped raw PT file.
-    memory -- A linear array of tuples in the form (start_address, end_address, source_file).
-    For example: (0x73fd0000, 0x74fd0000, '\Windows\SysWOW64\winmm.dll').
-    encoding -- A linear array of filenames. The index of the filename represents a unique and
-    consistent identifier for this file.
-    tip_only -- Only use TIP packets, ignore TNT.
+    trace_path -- The filepath to a raw PT trace (may be gzipped).
+    bin_path -- The path to a directory containing binaries for use by the disassembler.
+    mem_map -- A linear array of tuples in the form (start_address, end_address, source_file).
+
+    Required globals:
+    bbids -- See init_bbids().
 
     Yields:
-    Encoded values as integers until EOF is reached, after which None is yielded.
+    (source BBID, target BBID, transfer instruction) until EoF is reached, after which None is yielded.
     """
-    ptdump_path = utils.lookup_bin('ptdump')
-    if ptdump_path == '':
-        logger.log_error(module_name, 'ptdump not found, cannot read ' + str(filepath))
+    global bbids
+
+    ptxed_path = utils.lookup_bin('ptxed')
+    if ptxed_path == '':
+        logger.log_error(module_name, 'ptxed not found, cannot read ' + str(trace_path))
         return
 
-    if type(filepath) != str:
-        logger.log_error(module_name, "Parameter filepath must be a string")
+    if not path.isfile(trace_path):
+        logger.log_error(module_name, str(trace_path) + " does not exist or is not a file")
         return
 
-    if not path.isfile(filepath):
-        logger.log_error(module_name, str(filepath) + " does not exist")
-        return
-
-    if type(memory) != list or type(encoding) != list:
-        logger.log_error(module_name, "Parameters memory and encoding must be lists")
+    if not path.isdir(bin_path):
+        logger.log_error(module_name, str(trace_path) + " does not exist or is not a directory")
         return
 
     temp_dir = tempfile.mkdtemp()
 
     # If file is gzipped, it must be decompressed first
-    if filepath[-3:] == '.gz':
+    if trace_path[-3:] == '.gz':
         ifilepath = path.join(temp_dir, 'pt_data')
-        logger.log_debug(module_name, 'Decompressing ' + str(filepath) + ' into ' + str(ifilepath))
+        logger.log_debug(module_name, 'Decompressing ' + str(trace_path) + ' into ' + str(ifilepath))
         start_time = datetime.now()
-        with gzip.open(filepath, 'rb') as cfile:
+        with gzip.open(trace_path, 'rb') as cfile:
             with open(ifilepath, 'wb') as ofile:
                 ofile.write(cfile.read())
         delta_time = datetime.now() - start_time
-        logger.log_debug(module_name, 'Decompressing ' + str(filepath) + ' completed in ' + str(delta_time))
+        logger.log_debug(module_name, 'Decompressing ' + str(trace_path) + ' completed in ' + str(delta_time))
     else:
-        ifilepath = filepath
+        ifilepath = trace_path
 
-    # Use ptdump to generate tuples
-    command = [ptdump_path, '--no-pad', '--no-timing', '--no-cyc', '--no-offset', '--lastip', ifilepath]
+    # Use ptxed to generate tuples
+    command = [ptxed_path, '--block:show-blocks']
+    for map in mem_map:
+        start_addr = hex(map[0])
+        filename = path.basename(map[2].replace("\\", '/'))
+        binpath = path.join(bin_path, filename)
+        if not path.isfile(binpath):
+            logger.log_warning(module_name, binpath + ' does not exist')
+            continue
+        command.append('--raw')
+        command.append(binpath + ':' + start_addr)
+    command.append('--pt')
+    command.append(ifilepath)
+
     logger.log_debug(module_name, 'Running ' + ' '.join(command))
     start_time = datetime.now()
-    count = 0
-    last_addr = 0
-    warning_msg = 'Non-critical problems while reading trace, see debug level (-l) for more info'
+    warning_msg = 'Non-critical problems while disasm trace, see debug level (-l) for more info'
     has_warned = False
-    ptdump = subprocess.Popen(command, stdout=subprocess.PIPE)
-    for line in ptdump.stdout:
-        parts = line.split(' ')
-        packet_type = parts[0]
-        if packet_type == 'tip':
-            if parts[-1].strip() == '<suppressed>':
-                continue
-            try:
-                last_addr = int(parts[-1], 16)
-            except:
-                has_warned = warn_and_debug(has_warned, warning_msg,
-                        'Failed to convert ' + str(parts[-1]) + ' to int in ' + filepath)
-                continue
+    count = 0
+    last_bbid = 0
+    last_instr = ' '
 
-            mapping = get_source_file(last_addr, memory)
-            if mapping is None:
-                yield 0xFFFF000000000000 | last_addr
-                continue
+    ptxed = subprocess.Popen(command, stdout=subprocess.PIPE)
 
-            value = get_encoding(mapping[2], last_addr - mapping[0], encoding)
-            if value is None:
-                has_warned = warn_and_debug(has_warned, warning_msg,
-                        'Failed to find encoding for ' + str(mapping[2]) + ' in ' + filepath)
-                continue
+    while True:
+        line = ptxed.stdout.readline()
 
-            yield value
-            count += 1
+        # Metadata lines start with an [ and we want to skip all these except '[block]'
+        while len(line) >= 2 and line[0] == '[' and line[1] != 'b':
+            line = ptxed.stdout.readline()
 
-        elif not tip_only and packet_type == 'tnt.8':
-            tnts = parts[-1].strip()
-            mapping = get_source_file(last_addr, memory)
-            if mapping is None:
-                yield 0xFFFF000000000000 | last_addr
-                continue
+        if line == '':
+            break # EoF
 
-            value = get_encoding(mapping[2], 0, encoding)
-            if value is None:
-                has_warned = warn_and_debug(has_warned, warning_msg,
-                        'Failed to find encoding for ' + str(mapping[2]) + ' in ' + filepath)
-                continue
+        if '[block]' == line[:7]:
+            # We're moving between basic blocks. The last instruction was the end of the
+            # previous basic block and the next instruction is the start of the next.
+            line = ptxed.stdout.readline()
+            # Extract the type from the previous instruction (e.g., ret)
+            src_parts = last_instr.split(' ')
+            if len(src_parts) >= 3:
+                src_type = src_parts[2]
+            else:
+                has_warned = warn_and_debug(has_warned, warning_msg, 'Cannot extract type from: ' + str(src_parts))
+                last_instr = line
+                continue # bail out
+            # Extract the raw address of the next instruction
+            dst_addr = int(line.split(' ')[0], 16)
+            # Convert the target address into a BBID
+            dst_bbid = get_bbid(dst_addr, mem_map, bbids)
+            if not dst_bbid is None:
+                yield (last_bbid, dst_bbid, src_type)
+                last_bbid = dst_bbid
+                count += 1
+            else:
+                has_warned = warn_and_debug(has_warned, warning_msg, 'Cannot find BBID for address ' + hex(dst_addr))
+                pass # bail out
 
-            for tnt in tnts:
-                if tnt == '!':
-                    yield value
-                    count += 1
-                elif tnt == '.':
-                    yield value + 1
-                    count += 1
-                else:
-                    has_warned = warn_and_debug(has_warned, warning_msg,
-                            'Unexpected TNT value ' + str(tnt) + ' in ' + filepath)
-                    continue
-
-        # These packet types don't yield anything, but are needed to keep track of last IP
-        elif packet_type == 'fup':
-            if parts[-1].strip() == '<suppressed>':
-                continue
-            try:
-                last_addr = int(parts[-1], 16)
-            except:
-                has_warned = warn_and_debug(has_warned, warning_msg,
-                        'Failed to convert ' + str(parts[-1]) + ' to int in ' + filepath)
-                continue
-        elif packet_type == 'tip.pge':
-            if parts[-1].strip() == '<suppressed>':
-                continue
-            try:
-                last_addr = int(parts[-1], 16)
-            except:
-                has_warned = warn_and_debug(has_warned, warning_msg,
-                        'Failed to convert ' + str(parts[-1]) + ' to int in ' + filepath)
-                continue
-        elif packet_type == 'tip.pgd':
-            if parts[-1].strip() == '<suppressed>':
-                continue
-            try:
-                last_addr = int(parts[-1], 16)
-            except:
-                has_warned = warn_and_debug(has_warned, warning_msg,
-                        'Failed to convert ' + str(parts[-1]) + ' to int in ' + filepath)
-                continue
+        last_instr = line
 
     delta_time = datetime.now() - start_time
     logger.log_info(module_name, 'Generated ' + str(count) + ' entries in ' + str(delta_time))
@@ -316,8 +281,9 @@ def read_pt_file(filepath, memory, encoding, tip_only=False):
 def test_reader():
     from sys import argv, exit
     import traceback
-    if len(argv) < 3:
-        print argv[0], '<input_file>', '<memory_file>'
+
+    if len(argv) < 4:
+        print argv[0], '<input_file>', '<memory_file>', '<bin_dir>'
         exit(0)
 
     logger.log_start(logging.DEBUG)
@@ -326,13 +292,13 @@ def test_reader():
         ofile = tempfile.mkstemp(text=True)
         ofilefd = fdopen(ofile[0], 'w')
 
-        memory = read_memory_file(argv[2])
-        encoding = encoding_from_memory(memory)
+        mem_map = read_memory_file(argv[2])
+        bbids_mgr = init_bbids()
 
-        for tuple in read_pt_file(argv[1], memory, encoding):
+        for tuple in disasm_pt_file(argv[1], argv[3], mem_map):
             if tuple is None:
                 break
-            ofilefd.write(str([hex(x) for x in res]) + "\n")
+            ofilefd.write(str(tuple) + "\n")
 
         ofilefd.close()
     except:

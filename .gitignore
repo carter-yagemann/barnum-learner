@@ -1,4 +1,6 @@
 /scripts
+/bin
 /models
+/sets
 *.pyc
 *.swp
