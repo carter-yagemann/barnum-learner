@@ -147,8 +147,13 @@ def map_to_model(samples, f):
 def train_model(training_set):
     """ Trains the LSTM model."""
     start_time = datetime.now()
+    # Checkpointing for saving model weights
     freq_c = options.checkpoint_interval * 60
     last_c = datetime.now()
+    # For reporting current metrics
+    freq_s = 60
+    last_s = datetime.now()
+
     res = [0.0] * len(model.metrics_names)
     batches = 0
     for status in map_to_model(training_set, model.train_on_batch):
@@ -157,6 +162,13 @@ def train_model(training_set):
         for stat in range(len(status)):
             res[stat] += status[stat]
         batches += 1
+        # Print current metrics every minute
+        if (datetime.now() - last_s).total_seconds() > freq_s:
+            c_metrics = [status / batches for status in res]
+            c_metrics_str = ', '.join([str(model.metrics_names[x]) + ' ' + str(c_metrics[x]) for x in range(len(c_metrics))])
+            logger.log_info(module_name, 'Status: ' + c_metrics_str)
+            last_s = datetime.now()
+        # Save current weights at user specified frequency
         if freq_c > 0 and (datetime.now() - last_c).total_seconds() > freq_c:
             logger.log_debug(module_name, 'Checkpointing weights')
             try:
@@ -178,6 +190,10 @@ def train_model(training_set):
 
 def test_model(testing_set):
     """ Test the LSTM model."""
+    # For reporting current metrics
+    freq_s = 60
+    last_s = datetime.now()
+
     res = [0.0] * len(model.metrics_names)
     batches = 0
 
@@ -187,6 +203,12 @@ def test_model(testing_set):
         for stat in range(len(status)):
             res[stat] += status[stat]
         batches += 1
+        # Print current metrics every minute
+        if (datetime.now() - last_s).total_seconds() > freq_s:
+            c_metrics = [status / batches for status in res]
+            c_metrics_str = ', '.join([str(model.metrics_names[x]) + ' ' + str(c_metrics[x]) for x in range(len(c_metrics))])
+            logger.log_info(module_name, 'Status: ' + c_metrics_str)
+            last_s = datetime.now()
 
     if batches < 1:
         logger.log_warning(module_name, 'Testing set did not generate a full batch of data, cannot test')
