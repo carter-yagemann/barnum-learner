@@ -52,7 +52,6 @@ def main():
 
     # Initialization
     logger.log_start(20)
-    bbids_mgr = reader.init_bbids()
     mem_map = reader.read_memory_file(mem_filepath)
     history = list() # History of past basic blocks
 

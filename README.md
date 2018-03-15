@@ -5,7 +5,7 @@ documentation for more details. Then, install requirements:
 
     pip install -r requirements.txt
 
-Additionally, this code requires the program `ptxed`, which is included in
+This code also requires the program `ptxed`, which is included in
 the [libipt](https://github.com/01org/processor-trace) source code repo.
 This can either be installed from source or using the following APT repo
 maintained by the main author of this project:
@@ -13,9 +13,32 @@ maintained by the main author of this project:
     sh -c "$(wget -qO - https://super.gtisc.gatech.edu/libipt.sh)"
     sudo apt-get install ptxed
 
+Finally, a Redis database is needed. Most GNU/Linux distributions already
+have a package. For example, on Debian:
+
+    sudo apt install redis-server
+
 # Usage
 
 See `./lstm.py --help` for options and usage.
+
+## Redis
+
+This system uses a Redis database to map program basic blocks to unique IDs
+(referred to as BBIDs). By default, workers will try to connect to the default
+Redis port on localhost and use database 0. This can be changed via the command
+line options.
+
+It is safe to reuse the database across sessions if the program being analyized
+is the same. For different programs, the database should be flushed or a different
+database number should be used. `redis-cli` makes flushing easy:
+
+    redis-cli -n <dbnum> flushdb
+
+Also keep in mind that if you want to save the model weights and reuse them later,
+you will also need to keep the contents of the database used during training.
+Flushing the database will cause new (and likely different) BBIDs to be asigned,
+thereby making old weights invalid.
 
 # Useful features
 

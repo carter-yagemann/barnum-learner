@@ -77,8 +77,6 @@ def build_model():
                         output_dim=options.embedding_out_dim,
                         input_length=options.seq_len))
 
-    for layer in range(options.hidden_layers):
-        model.add(LSTM(options.units, return_sequences=True))
     model.add(LSTM(options.units))
 
     model.add(Dense(128))
@@ -98,12 +96,14 @@ def build_model():
 
 def map_to_model(samples, f):
     """ A helper function because train_on_batch() and test_on_batch() are so similar."""
+    global redis_info
+
     random.shuffle(samples)
     # There's no point spinning up more worker threads than there are samples
     threads = min(options.threads, len(samples))
 
     # When you gonna fire it up? When you gonna fire it up?
-    iqueue, oqueue = generator.start_generator(threads, reader.disasm_pt_file, options.queue_size, options.seq_len)
+    iqueue, oqueue = generator.start_generator(redis_info, threads, reader.disasm_pt_file, options.queue_size, options.seq_len)
 
     for sample in samples:
         sample_memory = reader.read_memory_file(sample['mapping_filepath'])
@@ -151,7 +151,7 @@ def train_model(training_set):
     freq_c = options.checkpoint_interval * 60
     last_c = datetime.now()
     # For reporting current metrics
-    freq_s = 60
+    freq_s = 300
     last_s = datetime.now()
 
     res = [0.0] * len(model.metrics_names)
@@ -188,10 +188,12 @@ def train_model(training_set):
     logger.log_info(module_name, 'Results: ' + ', '.join([str(model.metrics_names[x]) + ' ' + str(res[x]) for x in range(len(res))]))
     logger.log_debug(module_name, 'Training finished in ' + str(datetime.now() - start_time))
 
+    return res[0] # Average Loss
+
 def test_model(testing_set):
     """ Test the LSTM model."""
     # For reporting current metrics
-    freq_s = 60
+    freq_s = 300
     last_s = datetime.now()
 
     res = [0.0] * len(model.metrics_names)
@@ -257,16 +259,14 @@ if __name__ == '__main__':
     parser.add_option_group(parser_group_data)
 
     parser_group_lstm = OptionGroup(parser, 'LSTM Options')
-    parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=8,
-                                 help='Length of sequences fed into LSTM (default: 8)')
+    parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=32,
+                                 help='Length of sequences fed into LSTM (default: 32)')
     parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=256,
                                  help='Number of sequences per batch (default: 256)')
     parser_group_lstm.add_option('-e', '--epochs', action='store', dest='epochs', type='int', default=1,
                                  help='Number of times to iterate over test sets (default: 1)')
     parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=128,
                                  help='Number of units to use in LSTM (default: 128)')
-    parser_group_lstm.add_option('--hidden-layers', action='store', dest='hidden_layers', type='int', default=0,
-                                 help='Number of hidden LSTM layers (default: 0)')
     parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=10240,
                                  help='The input dimension of the embedding layer (default: 10240)')
     parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=256,
@@ -288,6 +288,15 @@ if __name__ == '__main__':
     parser_group_lstm.add_option('--eval-threshold', action='store', dest='eval_threshold', type='float', default=0.95,
                                  help='How confident model has to be that a sequence is malicious to mark the trace malicious (default: 0.95)')
     parser.add_option_group(parser_group_lstm)
+
+    parser_group_redis = OptionGroup(parser, 'Redis Options')
+    parser_group_redis.add_option('--hostname', action='store', dest='redis_host', type='string', default='localhost',
+                                  help='Hostname for Redis database (default: localhost)')
+    parser_group_redis.add_option('--port', action='store', dest='redis_port', type='int', default=6379,
+                                  help='Port for Redis database (default: 6379)')
+    parser_group_redis.add_option('--db', action='store', dest='redis_db', type='int', default=0,
+                                  help='DB number for Redis database (default: 0)')
+    parser.add_option_group(parser_group_redis)
 
     options, args = parser.parse_args()
 
@@ -368,14 +377,11 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'Checkpointing requires --save-weights')
         errors = True
 
-    if options.hidden_layers < 0:
-        logger.log_error(module_name, 'Hidden layers cannot be negative')
-        errors = True
-
     if errors:
         clean_exit(EXIT_INVALID_ARGS, 'Failed to parse options')
 
     # Further initialization
+    redis_info = [options.redis_host, options.redis_port, options.redis_db]
     logger.log_info(module_name, 'Scanning ' + str(root_dir))
     fs = reader.parse_pt_dir(root_dir)
     if fs is None or len(fs) == 0:
@@ -445,19 +451,23 @@ if __name__ == '__main__':
         except:
             clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM model:\n" + str(traceback.format_exc()))
 
-    # Initialize BBIDs mapping
-    bbids_mgr = reader.init_bbids()
-
     # Train model if user didn't already provide weights
     if len(options.use_weights) == 0:
+        prev_loss = 10000
         for epoch in range(options.epochs):
+            # TODO - Epoch callback - degrade learning rate
             logger.log_info(module_name, 'Starting training epoch ' + str(epoch + 1))
             try:
-                train_model(sets_meta['b_train'])
+                curr_loss = train_model(sets_meta['b_train'])
             except KeyboardInterrupt:
                 clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
             except:
                 clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
+            if curr_loss > prev_loss:
+                logger.log_info(module_name, "Loss metric didn't improve, stopping early")
+                break
+            else:
+                prev_loss = curr_loss
     else:
         logger.log_info(module_name, 'Restoring LSTM weights from provided filepath')
         try:

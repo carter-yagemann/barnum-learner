@@ -9,7 +9,8 @@ import gzip
 import subprocess
 from datetime import datetime
 import shutil
-from multiprocessing import Manager, Value
+import redis
+from redis_lock import Lock
 
 module_name = 'Reader'
 
@@ -119,31 +120,57 @@ def get_source_file(addr, memory):
             return tuple
     return None
 
-def init_bbids():
-    """ Returns a BBIDs manager. After calling this method, methods like disasm_pt_file() can be called."""
-    global bbids
-    mgr = Manager()
-    bbids = {'dict': mgr.dict(), 'cnt': Value('i', 0)}
-    return mgr
+def init_bbids(host, port, db):
+    """ Initializes bbids, which is needed for methods like disasm_pt_file().
 
-def get_bbid(addr, mem_map, bbids):
+    Keywork arguments:
+    host -- The hostname for a Redis database.
+    port -- The port number for a Redis database.
+    db -- The database number for a Redis database.
+
+    Returns:
+    True if everything initialized successfully, otherwise False.
+    """
+    global bbids
+
+    try:
+        conn = redis.StrictRedis(host=host, port=port, db=db)
+        conn.setnx('counter', 0)
+    except:
+        logger.log_error(module_name, 'Failed to open connection to Redis server')
+        return False
+
+    bbids = {'dict': dict(), 'conn': conn}
+    return True
+
+def get_bbid(addr, mem_map):
     """ Normalizes the destination address using the memory mapping and then converts
         it into a unique BBID.
 
     Keyword arguments:
     addr -- Address to get the BBID for.
     mem_map -- A linear array of tuples in the form (start_address, end_address, source_file).
-    bbids -- See init_bbids().
     """
+    global bbids
+    lock_name = 'BBIDsLock'
+
     map = get_source_file(addr, mem_map)
     if map is None:
         return None # Failed to find memory region this address belongs to
     offset = str(addr - map[0])
-    key = map[2] + offset
+    key = map[2] + ':' + offset
     if not key in bbids['dict']:
-        with bbids['cnt'].get_lock():
-            bbids['cnt'].value += 1
-            bbids['dict'][key] = bbids['cnt'].value
+        # Key not in local dictionary, check remote database
+        if bbids['conn'].exists(key):
+            bbids['dict'][key] = int(bbids['conn'].get(key), 10)
+        else:
+            # Key not in remote database either, need to assign it a BBID
+            with Lock(bbids['conn'], lock_name):
+                if not bbids['conn'].exists(key):
+                    # Key wasn't created while waiting for write lock, still need to assign BBID
+                    bbids['conn'].set(key, bbids['conn'].incr('counter'))
+                bbids['dict'][key] = int(bbids['conn'].get(key), 10)
+
     return bbids['dict'][key]
 
 def warn_and_debug(has_warned, warning, debug):
@@ -172,14 +199,9 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
     bin_path -- The path to a directory containing binaries for use by the disassembler.
     mem_map -- A linear array of tuples in the form (start_address, end_address, source_file).
 
-    Required globals:
-    bbids -- See init_bbids().
-
     Yields:
     (source BBID, target BBID, transfer instruction) until EoF is reached, after which None is yielded.
     """
-    global bbids
-
     ptxed_path = utils.lookup_bin('ptxed')
     if ptxed_path == '':
         logger.log_error(module_name, 'ptxed not found, cannot read ' + str(trace_path))
@@ -228,7 +250,7 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
     has_warned = False
     count = 0
     last_bbid = 0
-    last_instr = ' '
+    last_instr = None
 
     ptxed = subprocess.Popen(command, stdout=subprocess.PIPE)
 
@@ -246,6 +268,10 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
             # We're moving between basic blocks. The last instruction was the end of the
             # previous basic block and the next instruction is the start of the next.
             line = ptxed.stdout.readline()
+            if last_instr is None:
+                # The first basic block doesn't have a previous block, skip it
+                last_instr = line
+                continue
             # Extract the type from the previous instruction (e.g., ret)
             src_parts = last_instr.split(' ')
             if len(src_parts) >= 3:
@@ -257,7 +283,7 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
             # Extract the raw address of the next instruction
             dst_addr = int(line.split(' ')[0], 16)
             # Convert the target address into a BBID
-            dst_bbid = get_bbid(dst_addr, mem_map, bbids)
+            dst_bbid = get_bbid(dst_addr, mem_map)
             if not dst_bbid is None:
                 yield (last_bbid, dst_bbid, src_type)
                 last_bbid = dst_bbid
@@ -282,8 +308,8 @@ def test_reader():
     from sys import argv, exit
     import traceback
 
-    if len(argv) < 4:
-        print argv[0], '<input_file>', '<memory_file>', '<bin_dir>'
+    if len(argv) < 7:
+        print argv[0], '<input_file>', '<memory_file>', '<bin_dir>', '<redis_host>', '<redis_port>', '<redis_db>'
         exit(0)
 
     logger.log_start(logging.DEBUG)
@@ -293,7 +319,9 @@ def test_reader():
         ofilefd = fdopen(ofile[0], 'w')
 
         mem_map = read_memory_file(argv[2])
-        bbids_mgr = init_bbids()
+        if not init_bbids(argv[4], argv[5], argv[6]):
+            logger.log_error(module_name, 'Failed to initialize database connection')
+            exit(1)
 
         for tuple in disasm_pt_file(argv[1], argv[3], mem_map):
             if tuple is None:
