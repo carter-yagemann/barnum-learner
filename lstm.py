@@ -87,10 +87,10 @@ def build_model():
     model.add(Dense(options.units, name='logits'))
     model.add(Activation('softmax'))
 
-    opt = optimizers.RMSprop(lr=options.learning_rate)
+    opt = optimizers.RMSprop(lr=options.learning_rate, decay=options.learning_decay)
     model.compile(loss='sparse_categorical_crossentropy',
                   optimizer=opt,
-                  metrics=['sparse_categorical_accuracy'])
+                  metrics=['sparse_categorical_accuracy', 'sparse_top_k_categorical_accuracy'])
 
     return model
 
@@ -151,7 +151,7 @@ def train_model(training_set):
     freq_c = options.checkpoint_interval * 60
     last_c = datetime.now()
     # For reporting current metrics
-    freq_s = 300
+    freq_s = options.status_interval * 60
     last_s = datetime.now()
 
     res = [0.0] * len(model.metrics_names)
@@ -193,7 +193,7 @@ def train_model(training_set):
 def test_model(testing_set):
     """ Test the LSTM model."""
     # For reporting current metrics
-    freq_s = 300
+    freq_s = options.status_interval * 60
     last_s = datetime.now()
 
     res = [0.0] * len(model.metrics_names)
@@ -235,6 +235,8 @@ if __name__ == '__main__':
     parser_group_sys = OptionGroup(parser, 'System Options')
     parser_group_sys.add_option('-l', '--logging', action='store', dest='log_level', type='int', default=20,
                                 help='Logging level (10: Debug, 20: Info, 30: Warning, 40: Error, 50: Critical) (default: Info)')
+    parser_group_sys.add_option('--status-interval', action='store', dest='status_interval', type='int', default=5,
+                                help='How frequently (in minutes) to print the current status of training or testing (default: 5)')
     parser_group_sys.add_option('-t', '--threads', action='store', dest='threads', type='int', default=cpu_count(),
                                 help='Number of threads to use when parsing PT traces (default: number of CPU cores)')
     parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32768,
@@ -275,6 +277,8 @@ if __name__ == '__main__':
                                  help='The dropout rate in the dense layer (default: 0.5)')
     parser_group_lstm.add_option('--learning-rate', action='store', dest='learning_rate', type='float', default=0.01,
                                  help='Learning rate for the RMSprop optimizer (default: 0.01)')
+    parser_group_lstm.add_option('--learning-decay', action='store', dest='learning_decay', type='float', default=0.0,
+                                 help='Decay rate of optimizer (default: 0.0)')
     parser_group_lstm.add_option('--save-model', action='store', dest='save_model', type='string', default='',
                                  help='Save the generated model to the provided filepath in JSON format')
     parser_group_lstm.add_option('--save-weights', action='store', dest='save_weights', type='string', default='',
@@ -455,7 +459,6 @@ if __name__ == '__main__':
     if len(options.use_weights) == 0:
         prev_loss = 10000
         for epoch in range(options.epochs):
-            # TODO - Epoch callback - degrade learning rate
             logger.log_info(module_name, 'Starting training epoch ' + str(epoch + 1))
             try:
                 curr_loss = train_model(sets_meta['b_train'])
