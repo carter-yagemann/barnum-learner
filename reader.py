@@ -188,11 +188,17 @@ def warn_and_debug(has_warned, warning, debug):
     return has_warned
 
 def disasm_pt_file(trace_path, bin_path, mem_map):
-    """ Disassembles a PT trace into instructions and yields (source BBID, target BBID, transfer instruction).
+    """ Disassembles a PT trace into instructions and yields tuples.
 
-    Source BBID is the BB from which a transfer is happening.
-    Target BBID is the BB the transfer ends up in.
-    Transfer instruction is the instruction that causes the transfer from source to target (e.g., ret).
+    Each tuple contains the following elements:
+        Source BBID -- the BB from which a transfer is happening
+        Target BBID -- the BB the transfer ends up in
+        Transfer Instruction -- the instruction that causes the transfer (e.g., ret).
+        Full Instruction -- An array containing the parts of the full instruction (e.g., ['call', 'ptr', 'eax']).
+        Full Instruction Size -- The length of the previously mentioned array.
+
+    Note, the reason why Transfer Instruction and Full Instruction are both in the tuple despite being redundant
+    is for backwards compatibility with older versions of the code.
 
     Keyword arguments:
     trace_path -- The filepath to a raw PT trace (may be gzipped).
@@ -200,7 +206,7 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
     mem_map -- A linear array of tuples in the form (start_address, end_address, source_file).
 
     Yields:
-    (source BBID, target BBID, transfer instruction) until EoF is reached, after which None is yielded.
+    The tuples described above until EoF is reached, after which None is yielded.
     """
     ptxed_path = utils.lookup_bin('ptxed')
     if ptxed_path == '':
@@ -275,7 +281,7 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
             # Extract the type from the previous instruction (e.g., ret)
             src_parts = last_instr.split(' ')
             if len(src_parts) >= 3:
-                src_type = src_parts[2]
+                src_type = src_parts[2:]
             else:
                 has_warned = warn_and_debug(has_warned, warning_msg, 'Cannot extract type from: ' + str(src_parts))
                 last_instr = line
@@ -285,7 +291,7 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
             # Convert the target address into a BBID
             dst_bbid = get_bbid(dst_addr, mem_map)
             if not dst_bbid is None:
-                yield (last_bbid, dst_bbid, src_type)
+                yield (last_bbid, dst_bbid, src_type[0], src_type, len(src_type))
                 last_bbid = dst_bbid
                 count += 1
             else:

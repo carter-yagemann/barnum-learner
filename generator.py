@@ -3,6 +3,7 @@
 import logger
 import logging
 import reader
+import filters
 from multiprocessing import Process, Queue, Value
 from datetime import datetime
 import os
@@ -134,13 +135,13 @@ def worker_loop(redis_info, target, job_queue, res_queue, running, in_service, s
                 elif curr_size == (seq_len - 1):
                     seq.append(output[0])
                     # We only want to send sequences that end in an indirect control flow transfer
-                    if output[2] == 'ret':
+                    if True in [func(output) for func in filters.enabled_filters]:
                         res_queue.put([job[0], deepcopy([output[1]] + seq)])
                 else:
                     seq.pop(0)
                     seq.append(output[0])
                     # We only want to send sequences that end in an indirect control flow transfer
-                    if output[2] == 'ret':
+                    if True in [func(output) for func in filters.enabled_filters]:
                         res_queue.put([job[0], deepcopy([output[1]] + seq)])
         except KeyboardInterrupt:
             pass
@@ -165,6 +166,7 @@ def test_generator():
         ofile = tempfile.mkstemp(text=True)
         ofilefd = os.fdopen(ofile[0], 'w')
 
+        filters.set_filters(['ret'])
         memory = reader.read_memory_file(argv[3])
         redis_info = [argv[5], argv[6], argv[7]]
 

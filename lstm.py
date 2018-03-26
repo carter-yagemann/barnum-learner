@@ -6,6 +6,7 @@ import logger
 import logging
 import reader
 import generator
+import filters
 from optparse import OptionParser, OptionGroup
 import numpy as np
 import random
@@ -232,6 +233,19 @@ if __name__ == '__main__':
     # Parse input arguments
     parser = OptionParser(usage='Usage: %prog [options] pt_directory bin_directory')
 
+    parser_group_learn = OptionGroup(parser, 'Learning Options')
+    parser_group_learn.add_option('--learn-ret', action='store_true', dest='learn_ret',
+                                  help='Learn to predict return destinations')
+    parser_group_learn.add_option('--learn-call', action='store_true', dest='learn_call',
+                                  help='Learn to predict call destinations')
+    parser_group_learn.add_option('--learn-icall', action='store_true', dest='learn_icall',
+                                  help='Learn to predict indirect call destinations')
+    parser_group_learn.add_option('--learn-jmp', action='store_true', dest='learn_jmp',
+                                  help='Learn to predict jump destinations')
+    parser_group_learn.add_option('--learn-ijmp', action='store_true', dest='learn_ijmp',
+                                  help='Learn to predict indirect jump destinations')
+    parser.add_option_group(parser_group_learn)
+
     parser_group_sys = OptionGroup(parser, 'System Options')
     parser_group_sys.add_option('-l', '--logging', action='store', dest='log_level', type='int', default=20,
                                 help='Logging level (10: Debug, 20: Info, 30: Warning, 40: Error, 50: Critical) (default: Info)')
@@ -381,8 +395,26 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'Checkpointing requires --save-weights')
         errors = True
 
+    if options.learn_ret:
+        filters.add_filter('ret')
+
+    if options.learn_call:
+        filters.add_filter('call')
+
+    if options.learn_icall:
+        filters.add_filter('icall')
+
+    if options.learn_jmp:
+        filters.add_filter('jmp')
+
+    if options.learn_ijmp:
+        filters.add_filter('ijmp')
+
     if errors:
         clean_exit(EXIT_INVALID_ARGS, 'Failed to parse options')
+
+    if filters.get_num_enabled() == 0:
+        clean_exit(EXIT_INVALID_ARGS, 'Must set at least one learning flag in "Learning Options" section')
 
     # Further initialization
     redis_info = [options.redis_host, options.redis_port, options.redis_db]
