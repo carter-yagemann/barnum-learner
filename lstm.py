@@ -125,7 +125,7 @@ def map_to_model(samples, f):
             if in_service == 0:
                 break
             else:
-                logger.log_info(module_name, str(in_service) + ' workers still working on jobs')
+                logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
         # Xs cannot exceed embedding input dimension
