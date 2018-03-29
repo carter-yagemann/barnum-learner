@@ -133,8 +133,8 @@ def map_to_model(samples, f):
                 logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        xs.append(res[1][1:])
-        ys.append(res[1][0])
+        xs.append([x % options.embedding_in_dim for x in res[1][1:]])
+        ys.append(res[1][0] % options.embedding_in_dim)
 
         if len(ys) == options.batch_size:
             yield f(np.array(xs), np.array(ys))
