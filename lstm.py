@@ -85,13 +85,17 @@ def build_model():
 
     model.add(Dropout(options.dropout))
 
-    model.add(Dense(options.units, name='logits'))
+    # Since BBIDs are used as features and labels, the embedding input dimension equals the number of classes
+    model.add(Dense(options.embedding_in_dim))
     model.add(Activation('softmax'))
 
     opt = optimizers.RMSprop(lr=options.learning_rate, decay=options.learning_decay)
     model.compile(loss='sparse_categorical_crossentropy',
                   optimizer=opt,
                   metrics=['sparse_categorical_accuracy', 'sparse_top_k_categorical_accuracy'])
+
+    logger.log_info(module_name, 'Model Summary:')
+    model.summary(print_fn=(lambda x: logger.log_info(module_name, x)))
 
     return model
 
@@ -129,11 +133,8 @@ def map_to_model(samples, f):
                 logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        # Xs cannot exceed embedding input dimension
-        # Number of labels (Ys) cannot exceed number of units in first LSTM layer
-        # TODO - Better encoding schemes
-        xs.append([x % options.embedding_in_dim for x in res[1][1:]])
-        ys.append(res[1][0] % options.units)
+        xs.append(res[1][1:])
+        ys.append(res[1][0])
 
         if len(ys) == options.batch_size:
             yield f(np.array(xs), np.array(ys))
@@ -283,8 +284,8 @@ if __name__ == '__main__':
                                  help='Number of times to iterate over test sets (default: 1)')
     parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=128,
                                  help='Number of units to use in LSTM (default: 128)')
-    parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=10240,
-                                 help='The input dimension of the embedding layer (default: 10240)')
+    parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=262144,
+                                 help='The input dimension of the embedding layer (default: 262144)')
     parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=256,
                                  help='The output dimension of the embedding layer (default: 256)')
     parser_group_lstm.add_option('--dropout', action='store', dest='dropout', type='float', default=0.5,
