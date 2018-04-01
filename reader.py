@@ -3,11 +3,13 @@
 import logger
 import logging
 import utils
+import preprocess
 from os import path, fdopen, remove, listdir
 import tempfile
 import gzip
 import subprocess
 from datetime import datetime
+from struct import unpack
 import shutil
 import redis
 from redis_lock import Lock
@@ -23,12 +25,14 @@ def parse_pt_dir(root):
             info.txt
             mapping.txt[.gz]
             trace_0[.gz]
+            [trace_parsed.gz]
         [...]
 
     info.txt should contain two lines: the original filename and the ground truth label.
     mapping.txt (or optionally mapping.txt.gz if gzip compression is used) is the output
         of the volatility plugin psscan.
     trace_0 (or optionally trace_0.gz if gzip compression is used) is a raw PT trace.
+    trace_parsed.gz is an optional file generated using preprocess.py.
 
     Returns:
     An array where each item contains the following information in dictionary form: directory,
@@ -61,8 +65,10 @@ def parse_pt_dir(root):
                 entry_info['mapping_filepath'] = path.join(entry_info['base_dir'], file)
             elif file == 'trace_0' or file == 'trace_0.gz':
                 entry_info['trace_filepath'] = path.join(entry_info['base_dir'], file)
+            elif file == 'trace_parsed.gz':
+                entry_info['parsed_filepath'] = path.join(entry_info['base_dir'], file)
 
-        if len(entry_info.keys()) != 6:
+        if not len(entry_info.keys()) in [6, 7]:
             logger.log_warning(module_name, 'Could not find all the necessary files in ' + str(root) + ' skipping')
             logger.log_debug(module_name, 'Found keys: ' + str(entry_info.keys()))
         else:
@@ -305,6 +311,42 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
 
     # Cleanup temp dir
     shutil.rmtree(temp_dir)
+
+    # End of generator
+    while True:
+        yield None
+
+def read_preprocessed(filepath):
+    """ Reads a preprocessed trace file and yields tuples.
+
+    This method reads a file that has already been preprocessed with
+    preprocess.py and yields the same data as disasm_pt_file(). Since the input
+    file has already been preprocessed, this method doesn't need memory or BBID
+    mapping information.
+
+    Keyword arguments:
+    filepath -- The path to a preprocessed trace (commonly named trace_parsed.gz).
+
+    Yields:
+    The tuples described in disasm_pt_file() until EoF is reached, after which
+    None is yielded.
+    """
+    if not path.isfile(filepath):
+        logger.log_error(module_name, str(filepath) + ' is not a file')
+        return
+
+    with gzip.open(filepath, 'rb') as ifile:
+        while True:
+            # Get packet length
+            head = ifile.read(2)
+            if head == '':
+                break  # EoF
+            packet_len = unpack("H", head)[0]
+            # Get packet contents
+            body = ifile.read(packet_len)
+            if body == '':
+                break  # EoF
+            yield preprocess.unpack_instr(body)
 
     # End of generator
     while True:

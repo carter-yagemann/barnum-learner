@@ -107,17 +107,23 @@ def map_to_model(samples, f):
     # There's no point spinning up more worker threads than there are samples
     threads = min(options.threads, len(samples))
 
+    if options.preprocess:
+        gen_func = reader.read_preprocessed
+    else:
+        gen_func = reader.disasm_pt_file
+
     # When you gonna fire it up? When you gonna fire it up?
-    iqueue, oqueue = generator.start_generator(redis_info, threads, reader.disasm_pt_file, options.queue_size, options.seq_len)
+    iqueue, oqueue = generator.start_generator(redis_info, threads, gen_func, options.queue_size, options.seq_len)
 
     for sample in samples:
-        sample_memory = reader.read_memory_file(sample['mapping_filepath'])
-
-        if sample_memory is None:
-            logger.log_warning(module_name, 'Failed to parse memory file, skipping')
-            continue
-
-        iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
+        if options.preprocess:
+            iqueue.put((None, sample['parsed_filepath']))
+        else:
+            sample_memory = reader.read_memory_file(sample['mapping_filepath'])
+            if sample_memory is None:
+                logger.log_warning(module_name, 'Failed to parse memory file, skipping')
+                continue
+            iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
 
     # Get parsed sequences and feed them to the LSTM model
     xs = []
@@ -263,6 +269,8 @@ if __name__ == '__main__':
     parser.add_option_group(parser_group_sys)
 
     parser_group_data = OptionGroup(parser, 'Data Options')
+    parser_group_data.add_option('-p', '--preprocessed', action='store_true', dest='preprocess',
+                                 help='Only use samples where a preprocessed trace is available')
     parser_group_data.add_option('--train-size', action='store', dest='train_size', type='int', default=32,
                                  help='Number of traces to train on (default: 32)')
     parser_group_data.add_option('--test-size', action='store', dest='test_size', type='int', default=2,
@@ -423,6 +431,9 @@ if __name__ == '__main__':
     fs = reader.parse_pt_dir(root_dir)
     if fs is None or len(fs) == 0:
         clean_exit(EXIT_INVALID_ARGS, 'Directory ' + str(root_dir) + ' does not contain the expected file layout')
+
+    if options.preprocess:
+        fs = [x for x in fs if 'parsed_filepath' in x.keys()]
 
     benign = [x for x in fs if x['label'] == 'benign']
     malicious = [x for x in fs if x['label'] == 'malicious']

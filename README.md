@@ -92,6 +92,24 @@ Note that even when using `-i`, you must still provide the system with the
 correct root PT directory argument. Directories listed in the save file
 that are outside the provided root PT directory will be skipped.
 
+## Preprocessing
+
+By default, the system will read in raw traces directly and preprocess them
+on-the-fly before feeding them into the LSTM model for learning. This is the
+most efficient way to handle the traces in terms of storage space, but requires
+more CPU usage and more dependencies like Redis and `ptxed`.
+
+Alternatively, `preprocess.py` can be used to (as the name suggests) read raw
+traces and save preprocessed versions to storage. Using the `-p` flag in
+`lstm.py` will cause the system to only use samples where a preprocessed
+version of the trace is available. Note that the computer performing the
+preprocessing will still need Redis and `ptxed`, but once preprocessed, only
+Keras is needed to use the traces for learning.
+
+Although preprocessed traces are larger than raw ones, the lack of dependence
+on external software makes them better suited for shared cluster computing or
+for situations where preprocessing is the bottleneck for performance.
+
 # Development
 
 The following is a basic outline of how the code is organized to help
