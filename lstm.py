@@ -85,8 +85,7 @@ def build_model():
 
     model.add(Dropout(options.dropout))
 
-    # Since BBIDs are used as features and labels, the embedding input dimension equals the number of classes
-    model.add(Dense(options.embedding_in_dim))
+    model.add(Dense(options.max_classes))
     model.add(Activation('softmax'))
 
     opt = optimizers.RMSprop(lr=options.learning_rate, decay=options.learning_decay)
@@ -140,7 +139,7 @@ def map_to_model(samples, f):
                 continue
 
         xs.append([x % options.embedding_in_dim for x in res[1][1:]])
-        ys.append(res[1][0] % options.embedding_in_dim)
+        ys.append(res[1][0] % options.max_classes)
 
         if len(ys) == options.batch_size:
             yield f(np.array(xs), np.array(ys))
@@ -292,8 +291,10 @@ if __name__ == '__main__':
                                  help='Number of times to iterate over test sets (default: 1)')
     parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=128,
                                  help='Number of units to use in LSTM (default: 128)')
-    parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=262144,
-                                 help='The input dimension of the embedding layer (default: 262144)')
+    parser_group_lstm.add_option('--max-classes', action='store', dest='max_classes', type='int', default=200000,
+                                 help='The max number of classes to use (default: 200000)')
+    parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=200000,
+                                 help='The input dimension of the embedding layer (default: 200000)')
     parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=256,
                                  help='The output dimension of the embedding layer (default: 256)')
     parser_group_lstm.add_option('--dropout', action='store', dest='dropout', type='float', default=0.5,
