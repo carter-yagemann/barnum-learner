@@ -11,8 +11,6 @@ import subprocess
 from datetime import datetime
 from struct import unpack
 import shutil
-import redis
-from redis_lock import Lock
 
 module_name = 'Reader'
 
@@ -138,6 +136,15 @@ def init_bbids(host, port, db):
     True if everything initialized successfully, otherwise False.
     """
     global bbids
+    bbids = None
+
+    try:
+        global redis, Lock
+        import redis
+        from redis_lock import Lock
+    except:
+        logger.log_error(module_name, 'Redis packages not found, cannot initialize Redis connection')
+        return False
 
     try:
         conn = redis.StrictRedis(host=host, port=port, db=db)
@@ -159,6 +166,9 @@ def get_bbid(addr, mem_map):
     """
     global bbids
     lock_name = 'BBIDsLock'
+
+    if bbids is None:
+        return None
 
     map = get_source_file(addr, mem_map)
     if map is None:

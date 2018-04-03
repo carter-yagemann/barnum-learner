@@ -118,7 +118,7 @@ def map_to_model(samples, f):
         gen_func = reader.disasm_pt_file
 
     # When you gonna fire it up? When you gonna fire it up?
-    iqueue, oqueue = generator.start_generator(redis_info, threads, gen_func, options.queue_size, options.seq_len)
+    iqueue, oqueue = generator.start_generator(threads, gen_func, options.queue_size, options.seq_len, redis_info)
 
     for sample in samples:
         if options.preprocess:
@@ -433,7 +433,11 @@ if __name__ == '__main__':
         clean_exit(EXIT_INVALID_ARGS, 'Must set at least one learning flag in "Learning Options" section')
 
     # Further initialization
-    redis_info = [options.redis_host, options.redis_port, options.redis_db]
+    if not options.preprocess:
+        redis_info = [options.redis_host, options.redis_port, options.redis_db]
+    else:
+        redis_info = None
+
     logger.log_info(module_name, 'Scanning ' + str(root_dir))
     fs = reader.parse_pt_dir(root_dir)
     if fs is None or len(fs) == 0:

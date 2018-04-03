@@ -17,7 +17,7 @@ gen_workers = []
 in_service = []
 running = Value('b', False)
 
-def start_generator(redis_info, num_workers, target, res_queue_max=1000, seq_len=1):
+def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, redis_info=None):
     """ Starts up a generator for dispatching jobs to the target function.
 
     Once started, arrays of arguments (jobs) can be appended to the job queue and the
@@ -34,12 +34,13 @@ def start_generator(redis_info, num_workers, target, res_queue_max=1000, seq_len
     lengths greater than 1, result is an array where each item is the type target returns.
 
     Keyword arguments:
-    redis_info -- An array containing [hostname, port, db] for a Redis database.
     num_workers -- The number of workers to spawn for processing jobs.
     target -- The function to invoke.
     res_queue_max -- The max size of the results queue. Once full, workers will wait for space.
     seq_len -- Target is assumed to be a generator function, so workers will combine seq_len yielded
     values into an array before placing it on the results queue.
+    redis_info -- An array containing [hostname, port, db] for a Redis database. If None, no Redis
+    connection will be established, meaning workers can only use preprocessed traces.
 
     Returns:
     A queue for submitting jobs (job_queue) and a queue for getting results (res_queue).
@@ -105,7 +106,7 @@ def worker_loop(redis_info, target, job_queue, res_queue, running, in_service, s
 
     logger.log_debug(module_name, 'Worker ' + str(m_pid) + ' spawned with sequence length ' + str(seq_len))
 
-    if not reader.init_bbids(redis_info[0], redis_info[1], redis_info[2]):
+    if not redis_info is None and not reader.init_bbids(redis_info[0], redis_info[1], redis_info[2]):
         logger.log_error(module_name, 'Worker ' + str(m_pid) + ' cannot connect to database, exiting...')
         return
 
