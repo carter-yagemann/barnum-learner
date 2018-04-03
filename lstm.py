@@ -78,6 +78,12 @@ def build_model():
                         output_dim=options.embedding_out_dim,
                         input_length=options.seq_len))
 
+    model.add(LSTM(options.units, return_sequences=True))
+    model.add(Activation('relu'))
+
+    model.add(LSTM(options.units, return_sequences=True))
+    model.add(Activation('relu'))
+
     model.add(LSTM(options.units))
 
     model.add(Dense(128))
@@ -270,8 +276,8 @@ if __name__ == '__main__':
     parser_group_data = OptionGroup(parser, 'Data Options')
     parser_group_data.add_option('-p', '--preprocessed', action='store_true', dest='preprocess',
                                  help='Only use samples where a preprocessed trace is available')
-    parser_group_data.add_option('--train-size', action='store', dest='train_size', type='int', default=32,
-                                 help='Number of traces to train on (default: 32)')
+    parser_group_data.add_option('--train-size', action='store', dest='train_size', type='int', default=8,
+                                 help='Number of traces to train on (default: 8)')
     parser_group_data.add_option('--test-size', action='store', dest='test_size', type='int', default=2,
                                  help='Number of traces to test on (default: 2)')
     parser_group_data.add_option('-r', '--ratio', action='store', dest='sample_ratio', type='float', default=0.5,
@@ -291,16 +297,16 @@ if __name__ == '__main__':
                                  help='Number of times to iterate over test sets (default: 1)')
     parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=128,
                                  help='Number of units to use in LSTM (default: 128)')
-    parser_group_lstm.add_option('--max-classes', action='store', dest='max_classes', type='int', default=200000,
-                                 help='The max number of classes to use (default: 200000)')
+    parser_group_lstm.add_option('--max-classes', action='store', dest='max_classes', type='int', default=256,
+                                 help='The max number of classes to use (default: 256)')
     parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=200000,
                                  help='The input dimension of the embedding layer (default: 200000)')
     parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=256,
                                  help='The output dimension of the embedding layer (default: 256)')
     parser_group_lstm.add_option('--dropout', action='store', dest='dropout', type='float', default=0.5,
                                  help='The dropout rate in the dense layer (default: 0.5)')
-    parser_group_lstm.add_option('--learning-rate', action='store', dest='learning_rate', type='float', default=0.01,
-                                 help='Learning rate for the RMSprop optimizer (default: 0.01)')
+    parser_group_lstm.add_option('--learning-rate', action='store', dest='learning_rate', type='float', default=0.001,
+                                 help='Learning rate for the RMSprop optimizer (default: 0.001)')
     parser_group_lstm.add_option('--learning-decay', action='store', dest='learning_decay', type='float', default=0.0,
                                  help='Decay rate of optimizer (default: 0.0)')
     parser_group_lstm.add_option('--save-model', action='store', dest='save_model', type='string', default='',
