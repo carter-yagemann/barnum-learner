@@ -131,6 +131,7 @@ def map_to_model(samples, f):
             iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
 
     # Get parsed sequences and feed them to the LSTM model
+    batch_cnt = 0
     xs = []
     ys = []
     while True:
@@ -151,6 +152,9 @@ def map_to_model(samples, f):
             yield f(np.array(xs), np.array(ys))
             xs = []
             ys = []
+            batch_cnt += 1
+
+    logger.log_info(module_name, "Processed " + str(batch_cnt) + " batches, " + str(batch_cnt * options.batch_size) + " samples")
 
     generator.stop_generator(10)
     # End of generator
