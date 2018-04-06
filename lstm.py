@@ -13,6 +13,8 @@ import random
 from multiprocessing import cpu_count
 from datetime import datetime
 import traceback
+import tempfile
+import gzip
 
 module_name = 'LSTM'
 
@@ -238,11 +240,60 @@ def test_model(testing_set):
 
     logger.log_info(module_name, 'Results: ' + ', '.join([str(model.metrics_names[x]) + ' ' + str(res[x]) for x in range(len(res))]))
 
-def eval_model():
+def eval_model(eval_set):
     """ Evaluate the LSTM model."""
-    logger.log_error(module_name, 'Evaluation not implemented')
-    # TODO - How do we go from predictions and mis-predictions to binary classification of benign verses anomalous?
-    return
+    temp_dir = tempfile.mkdtemp(suffix='-lstm-pt')
+    logger.log_info(module_name, 'Evaluation results will be written to ' + temp_dir)
+
+    for sample in eval_set:
+        o_filename = sample['label'] + '-' + path.basename(sample['base_dir']) + '.gz'
+        o_filepath = path.join(temp_dir, o_filename)
+        logger.log_debug(module_name, 'Writing to ' + o_filepath)
+        with gzip.open(o_filepath, 'w') as ofile:
+            if options.preprocess:
+                gen_func = reader.read_preprocessed
+            else:
+                gen_func = reader.disasm_pt_file
+
+            iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len, redis_info)
+
+            if options.preprocess:
+                iqueue.put((None, sample['parsed_filepath']))
+            else:
+                sample_memory = reader.read_memory_file(sample['mapping_filepath'])
+                if sample_memory is None:
+                    logger.log_warning(module_name, 'Failed to parse memory file, skipping')
+                    continue
+                iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
+
+            xs = []
+            ys = []
+            while True:
+                try:
+                    res = oqueue.get(True, 5)
+                except:
+                    in_service = generator.get_in_service()
+                    if in_service == 0:
+                        break
+                    else:
+                        logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
+                        continue
+
+                xs.append([x % options.embedding_in_dim for x in res[1][1:]])
+                ys.append(res[1][0] % options.max_classes)
+
+                if len(ys) == options.batch_size:
+                    ps = model.predict_on_batch(np.array(xs)).tolist()
+                    cs = [max(p) for p in ps]                   # Max confidence
+                    ms = [p.index(max(p)) for p in ps]          # Most likely label
+                    ts = [int(a == b) for a, b in zip(ms, ys)]  # Compare prediction to real label
+                    for c, m, t in zip(cs, ms, ts):
+                        ofile.write(str(t) + ',' + str(m) + ',' + str(c) + "\n")
+
+                    xs = []
+                    ys = []
+
+            generator.stop_generator(10)
 
 if __name__ == '__main__':
 
@@ -559,7 +610,7 @@ if __name__ == '__main__':
     if not options.skip_eval:
         logger.log_info(module_name, 'Starting evaluation')
         try:
-            eval_model()
+            eval_model(sets_meta['b_test'] + sets_meta['m_test'])
         except KeyboardInterrupt:
             clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
         except:
