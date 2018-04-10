@@ -132,3 +132,18 @@ and is where the actual machine learning occurs.
 Also worth mentioning is `logger.py`, which provides a unified logging interface
 that is multi-process safe. The logger can be configured at runtime to filter
 logging to different levels (e.g., only info and above verses debugging).
+
+# Metrics and Visualizations
+
+In addition to the main system code, there are some additional scripts for
+calculating and visualizing various metrics:
+
+* `stats.py`: Takes a trace and counts the number of unique targets for each
+source and creates a distribution (i.e., number of sources with 1 unique target,
+with 2 unique targets, etc.). Currently missing support for preprocesssed
+traces.
+
+* `eval.py`: Takes as input the temporary directory created by `lstm.py`
+during the evaluation phase and writes to an output directory a bunch of graphs.
+Specifically, each trace produces a graph visualizing the predictions within
+that trace and a `summary.png` graph is created comparing the traces overall.
