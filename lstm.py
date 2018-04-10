@@ -242,6 +242,7 @@ def test_model(testing_set):
 
 def eval_model(eval_set):
     """ Evaluate the LSTM model."""
+    random.shuffle(eval_set)
     temp_dir = tempfile.mkdtemp(suffix='-lstm-pt')
     logger.log_info(module_name, 'Evaluation results will be written to ' + temp_dir)
 
