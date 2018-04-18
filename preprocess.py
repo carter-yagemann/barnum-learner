@@ -91,16 +91,22 @@ def main():
     # We're ready to parse the trace
     o_filepath = os.path.join(data_dir, 'trace_parsed.gz')
 
+    if os.path.isfile(o_filepath):
+        logger.log_error(module_name, 'ERROR: Preprocess file already exists')
+        logger.log_stop()
+        sys.exit(1)
+
     if not reader.init_bbids(options.redis_host, options.redis_port, options.redis_db):
         logger.log_error(module_name, 'ERROR: Failed to initialize database connection')
         logger.log_stop()
         sys.exit(1)
 
-    with gzip.open(o_filepath, 'wb') as ofile:
+    with gzip.open(o_filepath + '.part', 'wb') as ofile:
         for instr in reader.disasm_pt_file(trace_file, bin_dir, mem_map):
             if instr is None:
                 break
             ofile.write(pack_instr(instr))
+    os.rename(o_filepath + '.part', o_filepath)
 
     logger.log_stop()
 
