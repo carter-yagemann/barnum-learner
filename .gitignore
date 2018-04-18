@@ -3,5 +3,7 @@
 /models
 /sets
 /logs
+/evals
+/tasks
 *.pyc
 *.swp

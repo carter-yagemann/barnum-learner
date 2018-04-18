@@ -10,6 +10,7 @@ import os
 import traceback
 from copy import deepcopy
 from time import sleep
+from Queue import Empty
 
 module_name = 'Generator'
 
@@ -113,12 +114,14 @@ def worker_loop(redis_info, target, job_queue, res_queue, running, in_service, s
     while True:
         try:
             job = job_queue.get(True, 5)
-        except:
+        except Empty:
             if running.value:
                 continue
             else:
                 logger.log_debug(module_name, 'Worker ' + str(os.getpid()) + ' returned')
                 return
+        except KeyboardInterrupt:
+            return
 
         in_service.value = True
         logger.log_debug(module_name, 'Starting job in worker ' + str(m_pid))
