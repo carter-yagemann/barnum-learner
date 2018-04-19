@@ -140,8 +140,16 @@ calculating and visualizing various metrics:
 
 * `stats.py`: Takes a trace and counts the number of unique targets for each
 source and creates a distribution (i.e., number of sources with 1 unique target,
-with 2 unique targets, etc.). Currently missing support for preprocesssed
-traces.
+with 2 unique targets, etc.).
+
+* `bloom.py`: Takes a saved sets file and counts the number of cumulatively
+unique sequences over all the benign traces. In other words, it counts the number
+of unique sequences in the first trace, then the number of unique sequences in
+the second trace that are not in the first trace, then the number of unique
+sequences in the third trace that is in neither the first or second traces, and
+so forth.
+
+* `prob.py`: A simple probabilistic model for comparing LSTM against.
 
 * `eval.py`: Takes as input the temporary directory created by `lstm.py`
 during the evaluation phase and writes to an output directory a bunch of graphs.

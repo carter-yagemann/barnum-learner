@@ -4,3 +4,4 @@ h5py>=2.7.1
 redis>=2.10.6
 python-redis-lock>=3.2.0
 matplotlib>=1.5.3
+pybloom>=1.1

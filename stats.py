@@ -5,6 +5,8 @@ import os
 import reader
 import logger
 import numpy as np
+import filters
+from optparse import OptionParser
 
 module_name = 'Stats'
 
@@ -27,32 +29,48 @@ def insert(seq, dst):
 def main():
     global edges, max_seq
 
-    if len(sys.argv) != 6:
-        sys.stdout.write('Usage: ' + sys.argv[0] + ' <pt_trace> ' + '<mem_map> ' + '<bin_dir> ' + '<max_sequence_length> ' + '<output_file>' + "\n")
+    # Parse input arguments
+    parser = OptionParser(usage='Usage: %prog [options] pt_trace_dir output_file')
+    parser.add_option('-r', '--parse-ret', action='store_true', dest='parse_ret',
+                      help='Consider returns')
+    parser.add_option('-c', '--parse-icall', action='store_true', dest='parse_icall',
+                      help='Consider indirect calls')
+    parser.add_option('-j', '--parse-ijmp', action='store_true', dest='parse_ijmp',
+                      help='Consider indirect jumps')
+    parser.add_option('-s', '--sequence-length', action='store', dest='max_seq', type='int', default=32,
+                      help='Max sequence length to calculate (default: 32)')
+
+    options, args = parser.parse_args()
+
+    if len(args) != 2:
+        parser.print_help()
+        sys.stdout.write("\n  Note: Only preprocessed traces are supported\n")
         sys.exit(1)
 
-    trace_filepath = sys.argv[1]
-    mem_filepath = sys.argv[2]
-    bin_dir = sys.argv[3]
-    max_seq = int(sys.argv[4])
-    opath = sys.argv[5]
+    trace_filepath = os.path.join(args[0], 'trace_parsed.gz')
+    opath = args[1]
+    max_seq = options.max_seq
 
     # Input validation
     if not os.path.isfile(trace_filepath):
         sys.stderr.write('Error: ' + str(trace_filepath) + " either does not exist or is not a file\n")
         sys.exit(1)
 
-    if not os.path.isfile(mem_filepath):
-        sys.stderr.write('Error: ' + str(mem_filepath) + " either does not exist or is not a file\n")
-        sys.exit(1)
+    if options.parse_ret:
+        filters.add_filter('ret')
 
-    if not os.path.isdir(bin_dir):
-        sys.stderr.write('Error: ' + str(bin_dir) + " either does not exist or is not a directory\n")
+    if options.parse_icall:
+        filters.add_filter('icall')
+
+    if options.parse_ijmp:
+        filters.add_filter('ijmp')
+
+    if filters.get_num_enabled() == 0:
+        sys.stderr.write("Error: Must specify at least one thing to learn (-r, -c, -j)\n")
         sys.exit(1)
 
     # Initialization
     logger.log_start(20)
-    mem_map = reader.read_memory_file(mem_filepath)
     history = list() # History of past basic blocks
 
     # edges is a three-level dictionary where the keys for the first layer are sequence length,
@@ -62,21 +80,21 @@ def main():
     for seq_len in range(1, max_seq + 1):
         edges[seq_len] = dict()
 
-    # Disassembly
-    logger.log_info(module_name, 'Disassembling trace')
-    for tuple in reader.disasm_pt_file(trace_filepath, bin_dir, mem_map):
+    # Parsing
+    logger.log_info(module_name, 'Parsing trace')
+    for tuple in reader.read_preprocessed(trace_filepath):
         if tuple is None:
             break # End of trace
 
-        src_bbid, dst_bbid, instr = tuple
+        src_bbid, dst_bbid, instr = tuple[:3]
 
         # Update history
         history.append(src_bbid)
         if len(history) > max_seq:
             history.pop(0)
 
-        if not 'ret' in instr:
-            continue # Only care about counting ret control-flow transfers for now
+        if not True in [func(tuple) for func in filters.enabled_filters]:
+            continue
 
         for seq_len in range(1, min(len(history), max_seq) + 1):
             insert(history[-seq_len:], dst_bbid)
