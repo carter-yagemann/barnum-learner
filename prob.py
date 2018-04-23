@@ -19,7 +19,7 @@ import redis
 from Queue import Empty
 from functools32 import lru_cache
 
-module_name = 'Markov'
+module_name = 'Prob'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -76,11 +76,12 @@ def load_sets():
     except:
         clean_exit(EXIT_RUNTIME_ERROR, "Failed to load sets from " + str(options.input_sets))
 
-def init_markov():
+def init_prob(flush=False):
     global conn
     random.seed()
     conn = redis.StrictRedis(options.redis_host, options.redis_port, options.redis_db)
-    conn.flushdb()
+    if flush:
+        conn.flushdb()
 
 def redis_key(sequence, label):
     return str(sequence) + ":" + str(label)
@@ -103,22 +104,30 @@ def get_weights(sequence):
 
     return res
 
-def pick_markov(weights):
+def pick_prob(weights):
     rnd = random.random() * sum(weights)
     for i, w in enumerate(weights):
         rnd -= w
         if rnd < 0:
             return i
 
-def train_markov(sequence, label):
-    """ Trains a markov model."""
+def pick_prob_conf(weights):
+    total = sum(weights)
+    rnd = random.random() * total
+    for i, w in enumerate(weights):
+        rnd -= w
+        if rnd < 0:
+            return (i, float(weights[i]) / float(total))
+
+def train_prob(sequence, label):
+    """ Trains a prob model."""
     global conn
     key = redis_key(sequence, label)
     conn.incr(key)
     return 0.0
 
-def test_markov(sequence, label):
-    """ Tests the current markov model."""
+def test_prob(sequence, label):
+    """ Tests the current prob model."""
     global conn
 
     weights = get_weights(str(sequence))
@@ -127,15 +136,30 @@ def test_markov(sequence, label):
         predict = random.choice(range(options.max_classes))
     else:
         # Make a prediction based on the current state of the model
-        predict = pick_markov(weights)
+        predict = pick_prob(weights)
 
     if predict == label:
         return 1.0
     else:
         return 0.0
 
+def predict_prob(sequence, label):
+    """ Predict using current prob model."""
+    global conn
+
+    weights = get_weights(str(sequence))
+    if sum(weights) == 0:
+        # We've never seen this sequence before, so the best we can do is random guess
+        predict = random.choice(range(options.max_classes))
+        conf = 1.0 / options.max_classes
+    else:
+        # Make a prediction based on the current state of the model
+        predict, conf = pick_prob_conf(weights)
+
+    return (predict, conf)
+
 def worker_loop(f):
-    # Get parsed sequences and feed them to the markov model
+    # Get parsed sequences and feed them to the prob model
     samples = 0
     score = 0.0
     while True:
@@ -198,15 +222,62 @@ def map_to_model(samples, f):
     return sum(res) / len(res)
 
 def train_model(training_set):
-    """ Trains the Markov model."""
+    """ Trains the Prob model."""
     start_time = datetime.now()
-    map_to_model(training_set, train_markov)
+    map_to_model(training_set, train_prob)
     logger.log_info(module_name, 'Training finished in ' + str(datetime.now() - start_time))
 
 def test_model(testing_set):
-    """ Test the Markov model."""
-    res = map_to_model(testing_set, test_markov)
+    """ Test the Prob model."""
+    res = map_to_model(testing_set, test_prob)
     logger.log_info(module_name, 'Results: accuracy ' + str(res))
+
+def eval_model(eval_set):
+    """ Evaluate the Prob model."""
+    random.shuffle(eval_set)
+    temp_dir = tempfile.mkdtemp(suffix='-prob-pt')
+    logger.log_info(module_name, 'Evaluation results will be written to ' + temp_dir)
+
+    for sample in eval_set:
+        o_filename = sample['label'] + '-' + path.basename(sample['base_dir']) + '.gz'
+        o_filepath = path.join(temp_dir, o_filename)
+        logger.log_debug(module_name, 'Writing to ' + o_filepath)
+        with gzip.open(o_filepath, 'w') as ofile:
+            if options.preprocess:
+                gen_func = reader.read_preprocessed
+            else:
+                gen_func = reader.disasm_pt_file
+
+            iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len, redis_info)
+
+            if options.preprocess:
+                iqueue.put((None, sample['parsed_filepath']))
+            else:
+                sample_memory = reader.read_memory_file(sample['mapping_filepath'])
+                if sample_memory is None:
+                    logger.log_warning(module_name, 'Failed to parse memory file, skipping')
+                    continue
+                iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
+
+            while True:
+                try:
+                    res = oqueue.get(True, 5)
+                except:
+                    in_service = generator.get_in_service()
+                    if in_service == 0:
+                        break
+                    else:
+                        logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
+                        continue
+
+                xs = res[1][1:]
+                ys = res[1][0] % options.max_classes
+
+                predict, conf = predict_prob(xs, ys)
+                corr = int(predict == ys)
+                ofile.write(str(corr) + ',' + str(predict) + ',' + str(conf) + ',' + str(ys) + "\n")
+
+            generator.stop_generator(10)
 
 if __name__ == '__main__':
 
@@ -233,6 +304,12 @@ if __name__ == '__main__':
                                 help='Number of threads to use when parsing PT traces (default: number of CPU cores)')
     parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32768,
                                 help='Size of the results queue, making this too large may exhaust memory (default 32768)')
+    parser_group_sys.add_option('--skip-train', action='store_true', dest='skip_train',
+                                help='Skip training')
+    parser_group_sys.add_option('--skip-test', action='store_true', dest='skip_test',
+                                help='Skip testing')
+    parser_group_sys.add_option('--skip-eval', action='store_true', dest='skip_eval',
+                                help='Skip evaluation')
     parser.add_option_group(parser_group_sys)
 
     parser_group_data = OptionGroup(parser, 'Data Options')
@@ -242,18 +319,20 @@ if __name__ == '__main__':
                                  help='Number of traces to train on (default: 8)')
     parser_group_data.add_option('--test-size', action='store', dest='test_size', type='int', default=2,
                                  help='Number of traces to test on (default: 2)')
+    parser_group_data.add_option('-r', '--ratio', action='store', dest='sample_ratio', type='float', default=0.5,
+                                 help='The ratio of benign to malicious samples to use (default: 0.5)')
     parser_group_data.add_option('-o', '--output-sets', action='store', dest='output_sets', type='string', default='',
                                  help='Write the picked samples to the provided file so these sets can be resused in future runs (see -i)')
     parser_group_data.add_option('-i', '--input-sets', action='store', dest='input_sets', type='string', default='',
                                  help='Instead of using train-size and test-size, load the samples from this file (see -o).')
     parser.add_option_group(parser_group_data)
 
-    parser_group_markov = OptionGroup(parser, 'Markov Options')
-    parser_group_markov.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=32,
-                                 help='Length of sequences fed into Markov (default: 32)')
-    parser_group_markov.add_option('--max-classes', action='store', dest='max_classes', type='int', default=256,
+    parser_group_prob = OptionGroup(parser, 'Prob Options')
+    parser_group_prob.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=32,
+                                 help='Length of sequences fed into Prob (default: 32)')
+    parser_group_prob.add_option('--max-classes', action='store', dest='max_classes', type='int', default=256,
                                  help='The max number of classes to use (default: 256)')
-    parser.add_option_group(parser_group_markov)
+    parser.add_option_group(parser_group_prob)
 
     parser_group_redis = OptionGroup(parser, 'Redis Options')
     parser_group_redis.add_option('--hostname', action='store', dest='redis_host', type='string', default='localhost',
@@ -325,7 +404,7 @@ if __name__ == '__main__':
     else:
         redis_info = None
 
-    init_markov()
+    init_prob(not options.skip_train)  # flush Redis DB iff there will be training
 
     logger.log_info(module_name, 'Scanning ' + str(root_dir))
     fs = reader.parse_pt_dir(root_dir)
@@ -340,7 +419,7 @@ if __name__ == '__main__':
 
     logger.log_info(module_name, 'Found ' + str(len(benign)) + ' benign traces and ' + str(len(malicious)) + ' malicious traces')
 
-    sets_meta = {'b_train': [], 'b_test': []}
+    sets_meta = {'b_train': [], 'b_test': [], 'm_test': []}
 
     # User has the option of providing an input file that tells us which samples to use.
     if len(options.input_sets) > 0:
@@ -348,10 +427,14 @@ if __name__ == '__main__':
     # Otherwise, we're going to pick randomly based on train-size and test-size.
     else:
         b_train_size = int(options.train_size)
-        b_test_size = int(options.test_size)
+        b_test_size = int(options.test_size * options.sample_ratio)
+        m_test_size = options.test_size - b_test_size
 
         if len(benign) < b_train_size + b_test_size:
             clean_exit(EXIT_RUNTIME_ERROR, 'Not enough benign samples! Need ' + str(b_train_size + b_test_size) + ' have ' + str(len(benign)))
+
+        if len(malicious) < m_test_size:
+            clean_exit(EXIT_RUNTIME_ERROR, 'Not enough malicious samples! Need ' + str(m_test_size) + ' have ' + str(len(malicious)))
 
         random.seed() # We don't need a secure random shuffle, so this is good enough
         random.shuffle(benign)
@@ -361,6 +444,8 @@ if __name__ == '__main__':
             sets_meta['b_train'] = benign[:b_train_size]
         if b_test_size > 0:
             sets_meta['b_test'] = benign[-b_test_size:]
+        if m_test_size > 0:
+            sets_meta['m_test'] = malicious[-m_test_size:]
 
     logger.log_info(module_name, 'Selected ' + ', '.join([str(len(sets_meta[x])) + ' ' +  str(x) for x in sets_meta.keys()]))
 
@@ -368,24 +453,41 @@ if __name__ == '__main__':
         save_sets()
 
     # Train model
-    logger.log_info(module_name, 'Starting training')
-    try:
-        train_model(sets_meta['b_train'])
-    except KeyboardInterrupt:
-        clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
-    except:
-        clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
+    if not options.skip_train:
+        logger.log_info(module_name, 'Starting training')
+        try:
+            train_model(sets_meta['b_train'])
+        except KeyboardInterrupt:
+            clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
+        except:
+            clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
+    else:
+        logger.log_info(module_name, 'Skipping training')
 
     # Test model
-    logger.log_info(module_name, 'Starting testing')
-    try:
-        test_model(sets_meta['b_test'])
-    except KeyboardInterrupt:
-        clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
-    except:
-        clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
+    if not options.skip_test:
+        logger.log_info(module_name, 'Starting testing')
+        try:
+            test_model(sets_meta['b_test'])
+        except KeyboardInterrupt:
+            clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
+        except:
+            clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
+    else:
+        logger.log_info(module_name, 'Skipping testing')
+
+    # Evaluate model
+    if not options.skip_eval:
+        logger.log_info(module_name, 'Starting evaluation')
+        try:
+            eval_model(sets_meta['b_test'] + sets_meta['m_test'])
+        except KeyboardInterrupt:
+            clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
+        except:
+            clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
+    else:
+        logger.log_info(module_name, 'Skipping evaluation')
 
     # Cleanup
-    conn.flushdb()
     logger.log_info(module_name, 'Cleaning up and exiting')
     logger.log_stop()

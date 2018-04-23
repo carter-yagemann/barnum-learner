@@ -288,8 +288,8 @@ def eval_model(eval_set):
                     cs = [max(p) for p in ps]                   # Max confidence
                     ms = [p.index(max(p)) for p in ps]          # Most likely label
                     ts = [int(a == b) for a, b in zip(ms, ys)]  # Compare prediction to real label
-                    for c, m, t in zip(cs, ms, ts):
-                        ofile.write(str(t) + ',' + str(m) + ',' + str(c) + "\n")
+                    for c, m, t, y in zip(cs, ms, ts, ys):
+                        ofile.write(str(t) + ',' + str(m) + ',' + str(c) + ',' + str(y) + "\n")
 
                     xs = []
                     ys = []

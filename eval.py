@@ -22,7 +22,7 @@ def parse_file(ifilepath):
     try:
         with gzip.open(ifilepath, 'r') as ifile:
             for line in ifile:
-                res, guess, conf = line.strip().split(',')
+                res, guess, conf = line.strip().split(',')[:3]
                 try:
                     scatters[res+'x'].append(float(guess))
                     scatters[res+'y'].append(float(conf))

@@ -70,12 +70,12 @@ def main():
 
     # Parse input arguments
     parser = OptionParser(usage='Usage: %prog [options] input_set')
-    parser.add_option('-r', '--learn-ret', action='store_true', dest='learn_ret',
-                      help='Learn to predict return destinations')
-    parser.add_option('-c', '--learn-icall', action='store_true', dest='learn_icall',
-                      help='Learn to predict indirect call destinations')
-    parser.add_option('-j', '--learn-ijmp', action='store_true', dest='learn_ijmp',
-                      help='Learn to predict indirect jump destinations')
+    parser.add_option('-r', '--parse-ret', action='store_true', dest='parse_ret',
+                      help='Consider returns')
+    parser.add_option('-c', '--parse-icall', action='store_true', dest='parse_icall',
+                      help='Consider indirect calls')
+    parser.add_option('-j', '--parse-ijmp', action='store_true', dest='parse_ijmp',
+                      help='Consider indirect jumps')
     parser.add_option('-s', '--sequence-length', action='store', dest='seq_len', type='int', default=32,
                       help='Sequence lengths to use (default: 32)')
 
@@ -93,13 +93,13 @@ def main():
         sys.stderr.write('Error: ' + str(set_filepath) + " either does not exist or is not a file\n")
         sys.exit(1)
 
-    if options.learn_ret:
+    if options.parse_ret:
         filters.add_filter('ret')
 
-    if options.learn_icall:
+    if options.parse_icall:
         filters.add_filter('icall')
 
-    if options.learn_ijmp:
+    if options.parse_ijmp:
         filters.add_filter('ijmp')
 
     if filters.get_num_enabled() == 0:
