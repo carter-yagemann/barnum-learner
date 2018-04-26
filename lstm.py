@@ -302,23 +302,23 @@ if __name__ == '__main__':
     parser = OptionParser(usage='Usage: %prog [options] pt_directory bin_directory')
 
     parser_group_learn = OptionGroup(parser, 'Learning Options')
-    parser_group_learn.add_option('--learn-ret', action='store_true', dest='learn_ret',
-                                  help='Learn to predict return destinations')
-    parser_group_learn.add_option('--learn-call', action='store_true', dest='learn_call',
-                                  help='Learn to predict call destinations')
-    parser_group_learn.add_option('--learn-icall', action='store_true', dest='learn_icall',
-                                  help='Learn to predict indirect call destinations')
-    parser_group_learn.add_option('--learn-jmp', action='store_true', dest='learn_jmp',
-                                  help='Learn to predict jump destinations')
-    parser_group_learn.add_option('--learn-ijmp', action='store_true', dest='learn_ijmp',
-                                  help='Learn to predict indirect jump destinations')
+    parser_group_learn.add_option('--disable-ret', action='store_false', dest='learn_ret', default=True,
+                                  help='Disable learning to predict return destinations (Default: Enabled)')
+    parser_group_learn.add_option('--disable-icall', action='store_false', dest='learn_icall', default=True,
+                                  help='Disable learning to predict indirect call destinations (Default: Enabled)')
+    parser_group_learn.add_option('--disable-ijmp', action='store_false', dest='learn_ijmp', default=True,
+                                  help='Disable learning to predict indirect jump destinations (Default: Enabled)')
+    parser_group_learn.add_option('--learn-call', action='store_true', dest='learn_call', default=False,
+                                  help='Learn to predict call destinations (Default: Disabled)')
+    parser_group_learn.add_option('--learn-jmp', action='store_true', dest='learn_jmp', default=False,
+                                  help='Learn to predict jump destinations (Default: Disabled)')
     parser.add_option_group(parser_group_learn)
 
     parser_group_sys = OptionGroup(parser, 'System Options')
     parser_group_sys.add_option('-l', '--logging', action='store', dest='log_level', type='int', default=20,
                                 help='Logging level (10: Debug, 20: Info, 30: Warning, 40: Error, 50: Critical) (default: Info)')
-    parser_group_sys.add_option('--status-interval', action='store', dest='status_interval', type='int', default=5,
-                                help='How frequently (in minutes) to print the current status of training or testing (default: 5)')
+    parser_group_sys.add_option('--status-interval', action='store', dest='status_interval', type='int', default=60,
+                                help='How frequently (in minutes) to print the current status of training or testing (default: 60)')
     parser_group_sys.add_option('-t', '--threads', action='store', dest='threads', type='int', default=cpu_count(),
                                 help='Number of threads to use when parsing PT traces (default: number of CPU cores)')
     parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32768,
@@ -334,10 +334,10 @@ if __name__ == '__main__':
                                  help='Only use samples where a preprocessed trace is available')
     parser_group_data.add_option('--train-size', action='store', dest='train_size', type='int', default=8,
                                  help='Number of traces to train on (default: 8)')
-    parser_group_data.add_option('--test-size', action='store', dest='test_size', type='int', default=2,
-                                 help='Number of traces to test on (default: 2)')
-    parser_group_data.add_option('-r', '--ratio', action='store', dest='sample_ratio', type='float', default=0.5,
-                                 help='The ratio of benign to malicious samples to use (default: 0.5)')
+    parser_group_data.add_option('--test-size-benign', action='store', dest='test_size_b', type='int', default=2,
+                                 help='Number of benign traces to test on (default: 2)')
+    parser_group_data.add_option('--test-size-malicious', action='store', dest='test_size_m', type='int', default=2,
+                                 help='Number of malicious traces to test on (default: 2)')
     parser_group_data.add_option('-o', '--output-sets', action='store', dest='output_sets', type='string', default='',
                                  help='Write the picked samples to the provided file so these sets can be resused in future runs (see -i)')
     parser_group_data.add_option('-i', '--input-sets', action='store', dest='input_sets', type='string', default='',
@@ -347,18 +347,18 @@ if __name__ == '__main__':
     parser_group_lstm = OptionGroup(parser, 'LSTM Options')
     parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=32,
                                  help='Length of sequences fed into LSTM (default: 32)')
-    parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=256,
-                                 help='Number of sequences per batch (default: 256)')
-    parser_group_lstm.add_option('-e', '--epochs', action='store', dest='epochs', type='int', default=1,
-                                 help='Number of times to iterate over test sets (default: 1)')
+    parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=1536,
+                                 help='Number of sequences per batch (default: 1536)')
+    parser_group_lstm.add_option('-e', '--epochs', action='store', dest='epochs', type='int', default=16,
+                                 help='Number of times to iterate over test sets (default: 16)')
     parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=128,
                                  help='Number of units to use in LSTM (default: 128)')
-    parser_group_lstm.add_option('--max-classes', action='store', dest='max_classes', type='int', default=256,
-                                 help='The max number of classes to use (default: 256)')
+    parser_group_lstm.add_option('--max-classes', action='store', dest='max_classes', type='int', default=1024,
+                                 help='The max number of classes to use (default: 1024)')
     parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=200000,
                                  help='The input dimension of the embedding layer (default: 200000)')
-    parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=256,
-                                 help='The output dimension of the embedding layer (default: 256)')
+    parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=1024,
+                                 help='The output dimension of the embedding layer (default: 1024)')
     parser_group_lstm.add_option('--dropout', action='store', dest='dropout', type='float', default=0.5,
                                  help='The dropout rate in the dense layer (default: 0.5)')
     parser_group_lstm.add_option('--learning-rate', action='store', dest='learning_rate', type='float', default=0.001,
@@ -375,8 +375,6 @@ if __name__ == '__main__':
                                  help='Load the model from the provided filepath instead of building a new one')
     parser_group_lstm.add_option('--use-weights', action='store', dest='use_weights', type='string', default='',
                                  help='Load weights from the provided filepath (this will skip training and head straight to evaluation)')
-    parser_group_lstm.add_option('--eval-threshold', action='store', dest='eval_threshold', type='float', default=0.95,
-                                 help='How confident model has to be that a sequence is malicious to mark the trace malicious (default: 0.95)')
     parser.add_option_group(parser_group_lstm)
 
     parser_group_redis = OptionGroup(parser, 'Redis Options')
@@ -415,14 +413,6 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'Parsing requires at least 1 thread')
         errors = True
 
-    if options.sample_ratio < 0 or options.sample_ratio > 1:
-        logger.log_error(module_name, 'Ratio must be between 0 and 1')
-        errors = True
-    elif options.sample_ratio == 0:
-        logger.log_warning(module_name, 'Ratio is 0, no benign samples will be used!')
-    elif options.sample_ratio == 1:
-        logger.log_warning(module_name, 'Ratio is 1, no malicious samples will be used!')
-
     if options.seq_len < 2:
         logger.log_error(module_name, 'Sequence length must be at least 2')
         errors = True
@@ -439,8 +429,12 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'Training size must be at least 1')
         errors = True
 
-    if options.test_size < 1:
-        logger.log_error(module_name, 'Test size must be at least 1')
+    if options.test_size_b < 1:
+        logger.log_error(module_name, 'Benign test size must be at least 1')
+        errors = True
+
+    if options.test_size_m < 1:
+        logger.log_error(module_name, 'Malicious test size must be at least 1')
         errors = True
 
     if options.units < 1:
@@ -515,8 +509,8 @@ if __name__ == '__main__':
     # Otherwise, we're going to pick randomly based on train-size, test-size, and ratio.
     else:
         b_train_size = int(options.train_size)
-        b_test_size = int(options.test_size * options.sample_ratio)
-        m_test_size = options.test_size - b_test_size
+        b_test_size = int(options.test_size_b)
+        m_test_size = int(options.test_size_m)
 
         if len(benign) < b_train_size + b_test_size:
             clean_exit(EXIT_RUNTIME_ERROR, 'Not enough benign samples! Need ' + str(b_train_size + b_test_size) + ' have ' + str(len(benign)))
