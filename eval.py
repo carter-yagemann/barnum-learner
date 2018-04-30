@@ -11,7 +11,8 @@ from multiprocessing import Pool
 
 def parse_file(ifilepath):
     """Parse a single evaluation file"""
-    ofilepath = os.path.join(odirpath, os.path.basename(ifilepath) + '.png')
+    name = os.path.basename(ifilepath)
+    ofilepath = os.path.join(odirpath, name + '.png')
 
     scatters = {'0x': list(),
                 '0y': list(),
@@ -31,7 +32,7 @@ def parse_file(ifilepath):
                     continue
     except IOError:
         print 'WARNING: Failed to parse', ifilepath
-        return (2, 0, 0)
+        return (2, 0, 0, name)
 
     # Graph some plots for this lone evaluation
     total = len(scatters['0y']) + len(scatters['1y'])
@@ -62,12 +63,12 @@ def parse_file(ifilepath):
     plt.close(f)
 
     # Return some info that will be used to make the summary plot
-    if 'malicious' in os.path.basename(ifilepath):
-        return (1, per_0, avg_0)
-    elif 'benign' in os.path.basename(ifilepath):
-        return (0, per_0, avg_0)
+    if 'malicious' in name:
+        return (1, per_0, avg_0, name)
+    elif 'benign' in name:
+        return (0, per_0, avg_0, name)
     else:
-        return (2, per_0, avg_0)
+        return (2, per_0, avg_0, name)
 
 def main():
     """Main"""
@@ -98,15 +99,17 @@ def main():
     pool = Pool()
     res = pool.map(parse_file, files)
 
-    for label, per, avg in res:
-        if label == 0:
-            scatters['0x'].append(per)
-            scatters['0y'].append(avg)
-        elif label == 1:
-            scatters['1x'].append(per)
-            scatters['1y'].append(avg)
-        else:
-            'WARNING: Unexpected label', label
+    with open(os.path.join(odirpath, 'summary.csv'), 'w') as ofile:
+        for label, per, avg, name in res:
+            ofile.write(','.join([str(x) for x in [label, per, avg, name]]) + "\n")
+            if label == 0:
+                scatters['0x'].append(per)
+                scatters['0y'].append(avg)
+            elif label == 1:
+                scatters['1x'].append(per)
+                scatters['1y'].append(avg)
+            else:
+                'WARNING: Unexpected label', label
 
     plt.scatter(scatters['0x'], scatters['0y'], marker='o', c='blue')
     plt.scatter(scatters['1x'], scatters['1y'], marker='x', c='red')
