@@ -2,6 +2,7 @@
 
 import sys
 import os
+from optparse import OptionParser
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Hack so X isn't required
@@ -20,6 +21,10 @@ def parse_file(ifilepath):
                 '1y': list(),
                }
 
+    for hash in blacklist:
+        if hash in name:
+            return (2, 0, 0, name)  # Blacklisted
+
     try:
         with gzip.open(ifilepath, 'r') as ifile:
             for line in ifile:
@@ -32,7 +37,7 @@ def parse_file(ifilepath):
                     continue
     except IOError:
         print 'WARNING: Failed to parse', ifilepath
-        return (2, 0, 0, name)
+        return (3, 0, 0, name)
 
     # Graph some plots for this lone evaluation
     total = len(scatters['0y']) + len(scatters['1y'])
@@ -68,18 +73,25 @@ def parse_file(ifilepath):
     elif 'benign' in name:
         return (0, per_0, avg_0, name)
     else:
-        return (2, per_0, avg_0, name)
+        return (3, per_0, avg_0, name)
 
 def main():
     """Main"""
-    global odirpath
+    global odirpath, blacklist
 
-    if len(sys.argv) != 3:
-        print 'Usage:', sys.argv[0], '<eval_dir>', '<output_dir>'
-        sys.exit()
+    parser = OptionParser(usage='Usage: %prog [options] eval_dir output_dir')
+    parser.add_option('-b', '--black-list', action='store', dest='blacklist', type='str', default=None,
+                      help='An optional filepath to a list of SHA256 hashes representing PDF files to skip')
 
-    idirpath = sys.argv[1]
-    odirpath = sys.argv[2]
+    options, args = parser.parse_args()
+
+    if len(args) != 2:
+        parser.print_help()
+        sys.exit(1)
+
+    idirpath = args[0]
+    odirpath = args[1]
+    blacklist = list()
 
     if not os.path.isdir(idirpath):
         print 'ERROR:', idirpath, 'is not a directory'
@@ -88,6 +100,10 @@ def main():
     if not os.path.isdir(odirpath):
         print 'ERROR:', odirpath, 'is not a directory'
         sys.exit(1)
+
+    if not options.blacklist is None:
+        with open(options.blacklist, 'r') as ifile:
+            blacklist = [name.strip() for name in ifile.readlines()]
 
     scatters = {'0x': list(),
                 '0y': list(),
@@ -108,6 +124,8 @@ def main():
             elif label == 1:
                 scatters['1x'].append(per)
                 scatters['1y'].append(avg)
+            elif label == 2:
+                continue  # Blacklisted
             else:
                 'WARNING: Unexpected label', label
 
