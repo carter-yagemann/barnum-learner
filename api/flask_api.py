@@ -97,10 +97,10 @@ def train():
     if set_file is None:
         return json.dumps(res_error), 400
 
-    cmd = [options.lstm_prog, '--learn-ret', '--learn-icall', '--learn-ijmp', '--status-interval',
-           '3600', '--skip-test', '--skip-eval', '-p', '-i', set_file, '--embedding-output-dimension',
-           '1024', '-e', str(data['num_epoch']), '--save-model', model_path, '--save-weights',
-           weights_path, options.trace_dir, options.bin_dir]
+    cmd = [options.lstm_prog, '--status-interval', '3600', '--skip-test', '--skip-eval',
+           '-p', '-i', set_file, '-e', str(data['num_epoch']),
+           '--save-model', model_path, '--save-weights', weights_path,
+           options.trace_dir, options.bin_dir]
     fd, ofile = tempfile.mkstemp(prefix='res-', dir=data_dir)
 
     if options.debugging:
@@ -134,9 +134,9 @@ def evaluate():
     if set_file is None:
         return json.dumps(res_error), 400
 
-    cmd = [options.lstm_prog, '--learn-ret', '--learn-icall', '--learn-ijmp', '--status-interval',
-           '3600', '--skip-eval', '-p', '-i', set_file, '--use-model', model_path, '--use-weights',
-           weights_path, options.trace_dir, options.bin_dir]
+    cmd = [options.lstm_prog, '--status-interval', '3600', '--skip-eval',
+           '-p', '-i', set_file, '--use-model', model_path, '--use-weights', weights_path,
+           options.trace_dir, options.bin_dir]
     fd, ofile = tempfile.mkstemp(prefix='res-', dir=data_dir)
 
     if options.debugging:
