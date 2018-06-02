@@ -1,3 +1,20 @@
+# Overview
+
+This system determines if traces of a target program are anomalous
+using a two-layer classification.
+
+In the first layer, a deep learning
+model is given nominal traces to learn the normal control-flow of the program.
+Its learning task is to, given a sequence of basic blocks, determine what the
+next basic block should be. The intuition here is that when the program is
+behaving normally, this model should be able to predict the paths well. On the
+other hand, if the program starts acting abnormally (potentially due to an
+exploit), the model should perform poorly.
+
+This is where the second layer comes in. It calculates the first layer's
+performance and chooses thresholds to make a final decision about if a trace
+is anomalous.
+
 # Installation
 
 First, install a backend engine for Keras (e.g., Tensorflow). See Keras
@@ -20,7 +37,17 @@ have a package. For example, on Debian:
 
 # Usage
 
-See `./lstm.py --help` for options and usage.
+See `./lstm.py --help` and `./classifier.py --help` for options and usage.
+
+`lstm.py` is the first layer of the model. It has three phases: training, testing,
+and evaluation. Training trains the model on nominal traces and testing reports
+how well the model can predict the paths of new unseen nominal traces. Finally,
+evaluation records the model's (mis)predictions on unseen nominal *and anomalous*
+traces.
+
+`classifier.py` takes the output from the evaluation phase and calculates thresholds
+for detecting anomalies. It reports the final results in terms of error rates and
+produces a graph for visualization.
 
 ## Redis
 
@@ -149,9 +176,4 @@ the second trace that are not in the first trace, then the number of unique
 sequences in the third trace that is in neither the first or second traces, and
 so forth.
 
-* `prob.py`: A simple probabilistic model for comparing LSTM against.
-
-* `eval.py`: Takes as input the temporary directory created by `lstm.py`
-during the evaluation phase and writes to an output directory a bunch of graphs.
-Specifically, each trace produces a graph visualizing the predictions within
-that trace and a `summary.png` graph is created comparing the traces overall.
+* `prob.py`: A simple probabilistic model for comparing the first layer against.
