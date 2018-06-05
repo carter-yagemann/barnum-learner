@@ -10,7 +10,7 @@ import filters
 from optparse import OptionParser, OptionGroup
 import numpy as np
 import random
-from multiprocessing import cpu_count, Pool
+from multiprocessing import cpu_count, Pool, Process
 from datetime import datetime
 import traceback
 import tempfile
@@ -232,52 +232,64 @@ def test_model(testing_set):
     res = map_to_model(testing_set, test_prob)
     logger.log_info(module_name, 'Results: accuracy ' + str(res))
 
+def eval_worker_loop(temp_dir, sample):
+    o_filename = sample['label'] + '-' + path.basename(sample['base_dir']) + '.gz'
+    o_filepath = path.join(temp_dir, o_filename)
+    logger.log_debug(module_name, 'Writing to ' + o_filepath)
+    with gzip.open(o_filepath, 'w') as ofile:
+        if options.preprocess:
+            gen_func = reader.read_preprocessed
+        else:
+            gen_func = reader.disasm_pt_file
+
+        iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len, redis_info)
+
+        if options.preprocess:
+            iqueue.put((None, sample['parsed_filepath']))
+        else:
+            sample_memory = reader.read_memory_file(sample['mapping_filepath'])
+            if sample_memory is None:
+                logger.log_warning(module_name, 'Failed to parse memory file, skipping')
+                generator.stop_generator(10)
+                return
+            iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
+
+        while True:
+            try:
+                res = oqueue.get(True, 5)
+            except:
+                in_service = generator.get_in_service()
+                if in_service == 0:
+                    break
+                else:
+                    logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
+                    continue
+
+            xs = res[1][1:]
+            ys = res[1][0] % options.max_classes
+
+            predict, conf = predict_prob(xs, ys)
+            corr = int(predict == ys)
+            ofile.write(str(corr) + ',' + str(predict) + ',' + str(conf) + ',' + str(ys) + "\n")
+
+        generator.stop_generator(10)
+
 def eval_model(eval_set):
     """ Evaluate the Prob model."""
     random.shuffle(eval_set)
     temp_dir = tempfile.mkdtemp(suffix='-prob-pt')
     logger.log_info(module_name, 'Evaluation results will be written to ' + temp_dir)
 
+    workers = list()
     for sample in eval_set:
-        o_filename = sample['label'] + '-' + path.basename(sample['base_dir']) + '.gz'
-        o_filepath = path.join(temp_dir, o_filename)
-        logger.log_debug(module_name, 'Writing to ' + o_filepath)
-        with gzip.open(o_filepath, 'w') as ofile:
-            if options.preprocess:
-                gen_func = reader.read_preprocessed
-            else:
-                gen_func = reader.disasm_pt_file
+        worker = Process(target=eval_worker_loop, args=(temp_dir, sample))
+        workers.append(worker)
+        worker.start()
+        if len(workers) > options.threads:
+            workers.pop(0).join()
 
-            iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len, redis_info)
-
-            if options.preprocess:
-                iqueue.put((None, sample['parsed_filepath']))
-            else:
-                sample_memory = reader.read_memory_file(sample['mapping_filepath'])
-                if sample_memory is None:
-                    logger.log_warning(module_name, 'Failed to parse memory file, skipping')
-                    continue
-                iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
-
-            while True:
-                try:
-                    res = oqueue.get(True, 5)
-                except:
-                    in_service = generator.get_in_service()
-                    if in_service == 0:
-                        break
-                    else:
-                        logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
-                        continue
-
-                xs = res[1][1:]
-                ys = res[1][0] % options.max_classes
-
-                predict, conf = predict_prob(xs, ys)
-                corr = int(predict == ys)
-                ofile.write(str(corr) + ',' + str(predict) + ',' + str(conf) + ',' + str(ys) + "\n")
-
-            generator.stop_generator(10)
+    for worker in workers:
+        worker.join()
 
 if __name__ == '__main__':
 
