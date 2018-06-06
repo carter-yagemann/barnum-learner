@@ -177,3 +177,6 @@ sequences in the third trace that is in neither the first or second traces, and
 so forth.
 
 * `prob.py`: A simple probabilistic model for comparing the first layer against.
+
+* `syscall.py`: An API based model for comparision that can be used in place of
+the first layer. Uses API calls taken from Cuckoo reports.

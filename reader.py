@@ -24,6 +24,7 @@ def parse_pt_dir(root):
             mapping.txt[.gz]
             trace_0[.gz]
             [trace_parsed.gz]
+            [report.json.gz]
         [...]
 
     info.txt should contain two lines: the original filename and the ground truth label.
@@ -31,6 +32,7 @@ def parse_pt_dir(root):
         of the volatility plugin psscan.
     trace_0 (or optionally trace_0.gz if gzip compression is used) is a raw PT trace.
     trace_parsed.gz is an optional file generated using preprocess.py.
+    report.json.gz is an optional Cuckoo report file used by syscall.py.
 
     Returns:
     An array where each item contains the following information in dictionary form: directory,
@@ -65,8 +67,10 @@ def parse_pt_dir(root):
                 entry_info['trace_filepath'] = path.join(entry_info['base_dir'], file)
             elif file == 'trace_parsed.gz':
                 entry_info['parsed_filepath'] = path.join(entry_info['base_dir'], file)
+            elif file == 'report.json.gz':
+                entry_info['cuckoo_report'] = path.join(entry_info['base_dir'], file)
 
-        if not len(entry_info.keys()) in [6, 7]:
+        if len(entry_info.keys()) < 6:
             logger.log_warning(module_name, 'Could not find all the necessary files in ' + str(root) + ' skipping')
             logger.log_debug(module_name, 'Found keys: ' + str(entry_info.keys()))
         else:
