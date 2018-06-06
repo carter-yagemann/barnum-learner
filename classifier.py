@@ -35,6 +35,9 @@ def parse_file(ifilepath):
             sys.stderr.write('WARNING: Failed to parse ' + ifilepath + "\n")
             return (3, 0, 0, name)
 
+    if len(accuracy) == 0 or len(confidence) == 0:
+        return (3, 0, 0, name)
+
     avg_accuracy = 1.0 - float(sum(accuracy)) / float(len(accuracy))
     avg_confidence = float(sum(confidence)) / float(len(confidence))
 
