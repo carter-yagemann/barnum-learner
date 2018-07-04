@@ -15,6 +15,12 @@ This is where the second layer comes in. It calculates the first layer's
 performance and chooses thresholds to make a final decision about if a trace
 is anomalous.
 
+Additionally, this system can attempt to cluster traces that were found to be
+anomalous. First, a trace is analyzed to find patches of high misprediction.
+If found, those patches are extracted as a slice that should contain mostly
+anomalous activity. The slices are converted into vectors and then clustered
+using cosine distance.
+
 # Installation
 
 First, install a backend engine for Keras (e.g., Tensorflow). See Keras
@@ -37,7 +43,8 @@ have a package. For example, on Debian:
 
 # Usage
 
-See `./lstm.py --help` and `./classifier.py --help` for options and usage.
+See `./lstm.py --help`, `./classifier.py --help`, and `./knn.py --help` for options
+and usage.
 
 `lstm.py` is the first layer of the model. It has three phases: training, testing,
 and evaluation. Training trains the model on nominal traces and testing reports
@@ -48,6 +55,10 @@ traces.
 `classifier.py` takes the output from the evaluation phase and calculates thresholds
 for detecting anomalies. It reports the final results in terms of error rates and
 produces a graph for visualization.
+
+`knn.py` also takes the output from the previously mentioned evaluation phase and
+clusters anomalies using KNN with cosine distance. Note that the evaluation files you
+want to query will need to be in a seperate directory from the files used for training. 
 
 ## Redis
 
