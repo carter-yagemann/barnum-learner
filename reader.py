@@ -11,6 +11,8 @@ import subprocess
 from datetime import datetime
 from struct import unpack
 import shutil
+import re
+from functools32 import lru_cache
 
 module_name = 'Reader'
 
@@ -139,8 +141,8 @@ def init_bbids(host, port, db):
     Returns:
     True if everything initialized successfully, otherwise False.
     """
-    global bbids
-    bbids = None
+    global conn
+    conn = None
 
     try:
         global redis, Lock
@@ -157,10 +159,10 @@ def init_bbids(host, port, db):
         logger.log_error(module_name, 'Failed to open connection to Redis server')
         return False
 
-    bbids = {'dict': dict(), 'conn': conn}
     return True
 
-def get_bbid(addr, mem_map):
+@lru_cache(maxsize=100000)
+def get_bbid(addr):
     """ Normalizes the destination address using the memory mapping and then converts
         it into a unique BBID.
 
@@ -168,30 +170,26 @@ def get_bbid(addr, mem_map):
     addr -- Address to get the BBID for.
     mem_map -- A linear array of tuples in the form (start_address, end_address, source_file).
     """
-    global bbids
+    global conn, mem_map
     lock_name = 'BBIDsLock'
-
-    if bbids is None:
-        return None
 
     map = get_source_file(addr, mem_map)
     if map is None:
         return None # Failed to find memory region this address belongs to
     offset = str(addr - map[0])
     key = map[2] + ':' + offset
-    if not key in bbids['dict']:
-        # Key not in local dictionary, check remote database
-        if bbids['conn'].exists(key):
-            bbids['dict'][key] = int(bbids['conn'].get(key), 10)
-        else:
-            # Key not in remote database either, need to assign it a BBID
-            with Lock(bbids['conn'], lock_name):
-                if not bbids['conn'].exists(key):
-                    # Key wasn't created while waiting for write lock, still need to assign BBID
-                    bbids['conn'].set(key, bbids['conn'].incr('counter'))
-                bbids['dict'][key] = int(bbids['conn'].get(key), 10)
 
-    return bbids['dict'][key]
+    # Check remote database
+    res = conn.get(key)
+    if res:
+        return int(res, 10)
+
+    # Key not in remote database, need to assign it a BBID
+    with Lock(conn, lock_name):
+        if not conn.exists(key):
+            # Key wasn't created while waiting for write lock, still need to assign BBID
+            conn.set(key, conn.incr('counter'))
+    return int(conn.get(key), 10)
 
 def warn_and_debug(has_warned, warning, debug):
     """ Prints a debug message and also generates a generic warning message if one hasn't
@@ -207,7 +205,7 @@ def warn_and_debug(has_warned, warning, debug):
 
     return has_warned
 
-def disasm_pt_file(trace_path, bin_path, mem_map):
+def disasm_pt_file(trace_path, bin_path, mem_mapping):
     """ Disassembles a PT trace into instructions and yields tuples.
 
     Each tuple contains the following elements:
@@ -223,11 +221,19 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
     Keyword arguments:
     trace_path -- The filepath to a raw PT trace (may be gzipped).
     bin_path -- The path to a directory containing binaries for use by the disassembler.
-    mem_map -- A linear array of tuples in the form (start_address, end_address, source_file).
+    mem_mapping -- A linear array of tuples in the form (start_address, end_address, source_file).
 
     Yields:
     The tuples described above until EoF is reached, after which None is yielded.
     """
+    global mem_map
+    mem_map = mem_mapping
+
+    # Some regular expressions
+    re_block = re.compile('\[block\]')
+    re_meta  = re.compile('\[[^b]')
+
+    # Input validation
     ptxed_path = utils.lookup_bin('ptxed')
     if ptxed_path == '':
         logger.log_error(module_name, 'ptxed not found, cannot read ' + str(trace_path))
@@ -277,25 +283,15 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
     count = 0
     last_bbid = 0
     last_instr = None
+    moving_bb = False
 
-    ptxed = subprocess.Popen(command, stdout=subprocess.PIPE)
+    ptxed = subprocess.Popen(command, stdout=subprocess.PIPE, bufsize=1)
 
-    while True:
-        line = ptxed.stdout.readline()
-
-        # Metadata lines start with an [ and we want to skip all these except '[block]'
-        while len(line) >= 2 and line[0] == '[' and line[1] != 'b':
-            line = ptxed.stdout.readline()
-
-        if line == '':
-            break # EoF
-
-        if '[block]' == line[:7]:
-            # We're moving between basic blocks. The last instruction was the end of the
-            # previous basic block and the next instruction is the start of the next.
-            line = ptxed.stdout.readline()
+    for line in ptxed.stdout:
+        if moving_bb:
             if last_instr is None:
                 # The first basic block doesn't have a previous block, skip it
+                moving_bb = False
                 last_instr = line
                 continue
             # Extract the type from the previous instruction (e.g., ret)
@@ -304,21 +300,34 @@ def disasm_pt_file(trace_path, bin_path, mem_map):
                 src_type = src_parts[2:]
             else:
                 has_warned = warn_and_debug(has_warned, warning_msg, 'Cannot extract type from: ' + str(src_parts))
+                moving_bb = False
                 last_instr = line
                 continue # bail out
-            # Extract the raw address of the next instruction
+            # Extract the raw address of the new instruction
             dst_addr = int(line.split(' ')[0], 16)
             # Convert the target address into a BBID
-            dst_bbid = get_bbid(dst_addr, mem_map)
+            dst_bbid = get_bbid(dst_addr)
             if not dst_bbid is None:
                 yield (last_bbid, dst_bbid, src_type[0], src_type, len(src_type))
                 last_bbid = dst_bbid
                 count += 1
             else:
                 has_warned = warn_and_debug(has_warned, warning_msg, 'Cannot find BBID for address ' + hex(dst_addr))
-                pass # bail out
+            moving_bb = False
+            last_instr = line
+            continue
 
-        last_instr = line
+        # Metadata lines start with an [ and we want to skip all these except '[block]'
+        if re_meta.match(line):
+            continue
+
+        if re_block.match(line):
+            # We're moving between basic blocks. The last instruction was the end of the
+            # previous basic block and the next instruction is the start of the next.
+            moving_bb = True
+            continue
+        else:
+            last_instr = line
 
     delta_time = datetime.now() - start_time
     logger.log_info(module_name, 'Generated ' + str(count) + ' entries in ' + str(delta_time))

@@ -8,3 +8,4 @@ pybloom>=1.1
 celery>=4.1.0
 Flask>=0.12.2
 scikit-learn>=0.19.1
+functools32>=3.2.3.post2
