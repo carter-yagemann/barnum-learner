@@ -4,7 +4,7 @@ import sys
 import os
 from optparse import OptionParser
 import gzip
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 import numpy as np
 from sklearn.svm import SVC
 import matplotlib
@@ -50,10 +50,12 @@ def main():
     parser = OptionParser(usage='Usage: %prog [options] eval_dir')
     parser.add_option('-b', '--black-list', action='store', dest='blacklist', type='str', default=None,
                       help='An optional filepath to a list of SHA256 hashes representing PDF files to skip')
+    parser.add_option('-w', '--workers', action='store', dest='workers', type='int', default=cpu_count(),
+                      help='Number of workers to use (default: number of cores)')
 
     options, args = parser.parse_args()
 
-    if len(args) != 1:
+    if len(args) != 1 or options.workers < 1:
         parser.print_help()
         sys.exit(1)
 
@@ -71,7 +73,7 @@ def main():
     files = [os.path.join(idirpath, f) for f in os.listdir(idirpath) if os.path.isfile(os.path.join(idirpath, f))]
 
     # Calculate average accuracy and confidence for each sample
-    pool = Pool()
+    pool = Pool(options.workers)
     data = [sample for sample in pool.map(parse_file, files) if sample[0] < 2]
     ys = np.array([sample[0] for sample in data])
     xs = np.array([sample[1:3] for sample in data])
@@ -98,6 +100,10 @@ def main():
 
     sys.stdout.write("FP: " + str(fp) + "\n")
     sys.stdout.write("FN: " + str(fn) + "\n")
+
+    sys.stdout.write("\nFalse Negatives:\n\n")
+    for sample in fns:
+        sys.stdout.write(str(sample[0][3]) + "\n")
 
     # Plotting
     axes = plt.gca()
