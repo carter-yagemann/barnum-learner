@@ -11,7 +11,7 @@ from pybloom import ScalableBloomFilter
 module_name = 'Bloom'
 
 def load_set(filepath):
-    res = {'b_train': [], 'b_test': []}
+    res = {'b_train': []}
     set_key = ''
     with open(filepath, 'r') as ifile:
         for line in ifile:
@@ -32,7 +32,9 @@ def process_trace(dir, seq_len):
         return
 
     seq = list()
+    seen = ScalableBloomFilter()  # Only consider a sequence once per trace
     count = 0
+    total = 0
 
     for tuple in reader.read_preprocessed(trace_filepath):
         if tuple is None:
@@ -46,6 +48,8 @@ def process_trace(dir, seq_len):
             if True in [func(tuple) for func in filters.enabled_filters]:
                 if not bloom.add(str(seq)):
                     count += 1
+                if not seen.add(str(seq)):
+                    total += 1
         else:
             seq.pop(0)
             seq.append(tuple[0])
@@ -53,8 +57,11 @@ def process_trace(dir, seq_len):
             if True in [func(tuple) for func in filters.enabled_filters]:
                 if not bloom.add(str(seq)):
                     count += 1
+                if not seen.add(str(seq)):
+                    total += 1
 
-    sys.stdout.write(str(count) + "\n")
+    sys.stdout.write(str(count) + "," + str(total) + "," + str(float(count) / float(total)) + "\n")
+    sys.stdout.flush()
 
 def process_set(dirs, key, seq_len):
     sys.stdout.write('-- ' + str(key) + " --\n")
