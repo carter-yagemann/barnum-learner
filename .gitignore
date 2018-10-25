@@ -1,11 +1,4 @@
 /scripts
-/bin
-/models
-/sets
-/logs
-/evals
-/tasks
-/blacklists
 /api/api_keys
 /api/celeryconfig.py
 /api/cert.pem
