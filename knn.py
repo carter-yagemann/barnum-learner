@@ -81,20 +81,25 @@ def parse_args():
     options, args = parser.parse_args()
 
     # Input validation
+    errors = False
     if not options.tdir and not options.use_redis:
         sys.stderr.write("Must specify either a training directory or a Redis database of already processed training samples\n")
-        sys.exit(1)
+        errors = True
     if not options.qdir:
         sys.stderr.write("Must specify a query directory to read queries from\n")
-        sys.exit(1)
+        errors = True
     if options.tdir and not os.path.isdir(options.tdir):
         sys.stderr.write(options.tdir + " is not a directory\n")
-        sys.exit(1)
+        errors = True
     if options.qdir and not os.path.isdir(options.qdir):
         sys.stderr.write(options.qdir + " is not a directory\n")
-        sys.exit(1)
+        errors = True
     if options.bl_path and not os.path.isfile(options.bl_path):
         sys.stderr.write(options.bl_path + " is not a file\n")
+        errors = True
+
+    if errors:
+        parser.print_help()
         sys.exit(1)
 
     return (options, args)
