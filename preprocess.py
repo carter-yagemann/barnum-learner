@@ -27,13 +27,13 @@ from optparse import OptionParser, OptionGroup
 from struct import pack, unpack
 
 module_name = 'Preprocess'
-fmt_str = "IIBBB"
+fmt_str = "QQBBB"
 
 def unpack_instr(instr):
     """Unpacks an instruction that was written to file"""
-    parts = unpack(fmt_str, instr[:11])
-    s_str = instr[11:11 + parts[2]]
-    l_str = instr[11 + parts[2]:]
+    parts = unpack(fmt_str, instr[:19])
+    s_str = instr[19:19 + parts[2]]
+    l_str = instr[19 + parts[2]:]
     return (parts[0], parts[1], s_str, l_str.split(' '), parts[4])
 
 def pack_instr(instr):
@@ -45,16 +45,6 @@ def pack_instr(instr):
 def main():
     # Parse input arguments
     parser = OptionParser(usage='Usage: %prog [options] trace_directory bin_directory')
-
-    parser_group_redis = OptionGroup(parser, 'Redis Options')
-    parser_group_redis.add_option('--hostname', action='store', dest='redis_host', type='string', default='localhost',
-                                  help='Hostname for Redis database (default: localhost)')
-    parser_group_redis.add_option('--port', action='store', dest='redis_port', type='int', default=6379,
-                                  help='Port for Redis database (default: 6379)')
-    parser_group_redis.add_option('--db', action='store', dest='redis_db', type='int', default=0,
-                                  help='DB number for Redis database (default: 0)')
-    parser.add_option_group(parser_group_redis)
-
     options, args = parser.parse_args()
 
     if len(args) < 2:
@@ -110,11 +100,6 @@ def main():
 
     if os.path.isfile(o_filepath):
         logger.log_error(module_name, 'ERROR: Preprocess file already exists')
-        logger.log_stop()
-        sys.exit(1)
-
-    if not reader.init_bbids(options.redis_host, options.redis_port, options.redis_db):
-        logger.log_error(module_name, 'ERROR: Failed to initialize database connection')
         logger.log_stop()
         sys.exit(1)
 

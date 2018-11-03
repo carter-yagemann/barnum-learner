@@ -29,7 +29,7 @@ from datetime import datetime
 from struct import unpack
 import shutil
 import re
-from functools32 import lru_cache
+from zlib import adler32
 
 module_name = 'Reader'
 
@@ -147,38 +147,6 @@ def get_source_file(addr, memory):
             return tuple
     return None
 
-def init_bbids(host, port, db):
-    """ Initializes bbids, which is needed for methods like disasm_pt_file().
-
-    Keywork arguments:
-    host -- The hostname for a Redis database.
-    port -- The port number for a Redis database.
-    db -- The database number for a Redis database.
-
-    Returns:
-    True if everything initialized successfully, otherwise False.
-    """
-    global conn
-    conn = None
-
-    try:
-        global redis, Lock
-        import redis
-        from redis_lock import Lock
-    except:
-        logger.log_error(module_name, 'Redis packages not found, cannot initialize Redis connection')
-        return False
-
-    try:
-        conn = redis.StrictRedis(host=host, port=port, db=db)
-        conn.setnx('counter', 0)
-    except:
-        logger.log_error(module_name, 'Failed to open connection to Redis server')
-        return False
-
-    return True
-
-@lru_cache(maxsize=100000)
 def get_bbid(addr):
     """ Normalizes the destination address using the memory mapping and then converts
         it into a unique BBID.
@@ -187,26 +155,13 @@ def get_bbid(addr):
     addr -- Address to get the BBID for.
     mem_map -- A linear array of tuples in the form (start_address, end_address, source_file).
     """
-    global conn, mem_map
-    lock_name = 'BBIDsLock'
+    global mem_map
 
     map = get_source_file(addr, mem_map)
     if map is None:
         return None # Failed to find memory region this address belongs to
-    offset = str(addr - map[0])
-    key = map[2] + ':' + offset
-
-    # Check remote database
-    res = conn.get(key)
-    if res:
-        return int(res, 10)
-
-    # Key not in remote database, need to assign it a BBID
-    with Lock(conn, lock_name):
-        if not conn.exists(key):
-            # Key wasn't created while waiting for write lock, still need to assign BBID
-            conn.set(key, conn.incr('counter'))
-    return int(conn.get(key), 10)
+    offset = addr - map[0]
+    return (abs(adler32(map[2])) << 32) + offset
 
 def warn_and_debug(has_warned, warning, debug):
     """ Prints a debug message and also generates a generic warning message if one hasn't
@@ -396,8 +351,8 @@ def test_reader():
     from sys import argv, exit
     import traceback
 
-    if len(argv) < 7:
-        print argv[0], '<input_file>', '<memory_file>', '<bin_dir>', '<redis_host>', '<redis_port>', '<redis_db>'
+    if len(argv) < 4:
+        print argv[0], '<input_file>', '<memory_file>', '<bin_dir>'
         exit(0)
 
     logger.log_start(logging.DEBUG)
@@ -407,9 +362,6 @@ def test_reader():
         ofilefd = fdopen(ofile[0], 'w')
 
         mem_map = read_memory_file(argv[2])
-        if not init_bbids(argv[4], argv[5], argv[6]):
-            logger.log_error(module_name, 'Failed to initialize database connection')
-            exit(1)
 
         for tuple in disasm_pt_file(argv[1], argv[3], mem_map):
             if tuple is None:
