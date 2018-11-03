@@ -23,20 +23,24 @@ using cosine distance.
 
 # Installation
 
-First, install a backend engine for Keras (e.g., Tensorflow). See Keras
-documentation for more details. Then, install requirements:
+First, install a backend engine for Keras (e.g., Tensorflow). See the Keras
+documentation for more details. Then install the requirements:
 
     pip install -r requirements.txt
 
-This code also requires the program `ptxed`, which is included in
-the [libipt](https://github.com/01org/processor-trace) source code repo.
-This can either be installed from source or using the following APT repo
-maintained by the main author of this project:
+This code also requires a modified version of the program `ptxed`, which can
+be found in the `ptxed` directory of this repo. First, you'll need `libxed-dev`.
+You can download it from your package manager or compile it from
+the [repo](https://github.com/intelxed/xed). After that, build `ptxed`:
 
-    sh -c "$(wget -qO - https://super.gtisc.gatech.edu/libipt.sh)"
-    sudo apt-get install ptxed
+    mkdir ptxed/build
+    cd ptxed/build
+    cmake ..
+    # Modify CMakeCache.txt so PTXED:BOOL=ON
+    make
+    # Add ptxed/build/bin to your PATH
 
-Finally, a Redis database is needed. Most GNU/Linux distributions already
+Finally, a Redis database is needed to use `knn.py`. Most GNU/Linux distributions already
 have a package. For example, on Debian:
 
     sudo apt install redis-server
@@ -59,24 +63,6 @@ produces a graph for visualization.
 `knn.py` also takes the output from the previously mentioned evaluation phase and
 clusters anomalies using KNN with cosine distance. Note that the evaluation files you
 want to query will need to be in a seperate directory from the files used for training. 
-
-## Redis
-
-This system uses a Redis database to map program basic blocks to unique IDs
-(referred to as BBIDs). By default, workers will try to connect to the default
-Redis port on localhost and use database 0. This can be changed via the command
-line options.
-
-It is safe to reuse the database across sessions if the program being analyized
-is the same. For different programs, the database should be flushed or a different
-database number should be used. `redis-cli` makes flushing easy:
-
-    redis-cli -n <dbnum> flushdb
-
-Also keep in mind that if you want to save the model weights and reuse them later,
-you will also need to keep the contents of the database used during training.
-Flushing the database will cause new (and likely different) BBIDs to be asigned,
-thereby making old weights invalid.
 
 # Useful features
 
@@ -135,13 +121,13 @@ that are outside the provided root PT directory will be skipped.
 By default, the system will read in raw traces directly and preprocess them
 on-the-fly before feeding them into the LSTM model for learning. This is the
 most efficient way to handle the traces in terms of storage space, but requires
-more CPU usage and more dependencies like Redis and `ptxed`.
+more CPU usage and more dependencies like `ptxed`.
 
 Alternatively, `preprocess.py` can be used to (as the name suggests) read raw
 traces and save preprocessed versions to storage. Using the `-p` flag in
 `lstm.py` will cause the system to only use samples where a preprocessed
 version of the trace is available. Note that the computer performing the
-preprocessing will still need Redis and `ptxed`, but once preprocessed, only
+preprocessing will still need `ptxed`, but once preprocessed, only
 Keras is needed to use the traces for learning.
 
 Although preprocessed traces are larger than raw ones, the lack of dependence
