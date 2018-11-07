@@ -125,8 +125,6 @@ def build_model():
 
 def map_to_model(samples, f):
     """ A helper function because train_on_batch() and test_on_batch() are so similar."""
-    global redis_info
-
     random.shuffle(samples)
     # There's no point spinning up more worker threads than there are samples
     threads = min(options.threads, len(samples))
@@ -137,7 +135,7 @@ def map_to_model(samples, f):
         gen_func = reader.disasm_pt_file
 
     # When you gonna fire it up? When you gonna fire it up?
-    iqueue, oqueue = generator.start_generator(threads, gen_func, options.queue_size, options.seq_len, redis_info)
+    iqueue, oqueue = generator.start_generator(threads, gen_func, options.queue_size, options.seq_len)
 
     for sample in samples:
         if options.preprocess:
@@ -273,7 +271,7 @@ def eval_model(eval_set):
             else:
                 gen_func = reader.disasm_pt_file
 
-            iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len, redis_info)
+            iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len)
 
             if options.preprocess:
                 iqueue.put((None, sample['parsed_filepath']))
@@ -394,15 +392,6 @@ if __name__ == '__main__':
                                  help='Load weights from the provided filepath (this will skip training and head straight to evaluation)')
     parser.add_option_group(parser_group_lstm)
 
-    parser_group_redis = OptionGroup(parser, 'Redis Options')
-    parser_group_redis.add_option('--hostname', action='store', dest='redis_host', type='string', default='localhost',
-                                  help='Hostname for Redis database (default: localhost)')
-    parser_group_redis.add_option('--port', action='store', dest='redis_port', type='int', default=6379,
-                                  help='Port for Redis database (default: 6379)')
-    parser_group_redis.add_option('--db', action='store', dest='redis_db', type='int', default=0,
-                                  help='DB number for Redis database (default: 0)')
-    parser.add_option_group(parser_group_redis)
-
     options, args = parser.parse_args()
 
     if len(args) < 2:
@@ -498,12 +487,6 @@ if __name__ == '__main__':
 
     if filters.get_num_enabled() == 0:
         clean_exit(EXIT_INVALID_ARGS, 'Must set at least one learning flag in "Learning Options" section')
-
-    # Further initialization
-    if not options.preprocess:
-        redis_info = [options.redis_host, options.redis_port, options.redis_db]
-    else:
-        redis_info = None
 
     logger.log_info(module_name, 'Scanning ' + str(root_dir))
     fs = reader.parse_pt_dir(root_dir)

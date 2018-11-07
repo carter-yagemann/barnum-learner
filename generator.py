@@ -35,7 +35,7 @@ gen_workers = []
 in_service = []
 running = Value('b', False)
 
-def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, redis_info=None):
+def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
     """ Starts up a generator for dispatching jobs to the target function.
 
     Once started, arrays of arguments (jobs) can be appended to the job queue and the
@@ -57,7 +57,6 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, redis_in
     res_queue_max -- The max size of the results queue. Once full, workers will wait for space.
     seq_len -- Target is assumed to be a generator function, so workers will combine seq_len yielded
     values into an array before placing it on the results queue.
-    redis_info -- An array containing [hostname, port, db] for a Redis database. If None, no Redis
     connection will be established, meaning workers can only use preprocessed traces.
 
     Returns:
@@ -71,7 +70,7 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, redis_in
     running.value = True
     for id in range(num_workers):
         in_service.append(Value('b', False))
-        worker_args = (redis_info, target, job_queue, res_queue, running, in_service[id], int(seq_len))
+        worker_args = (target, job_queue, res_queue, running, in_service[id], int(seq_len))
         worker = Process(target=worker_loop, args=worker_args)
         gen_workers.append(worker)
         worker.start()
@@ -108,7 +107,7 @@ def get_in_service():
 
     return count
 
-def worker_loop(redis_info, target, job_queue, res_queue, running, in_service, seq_len=1):
+def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1):
     """ Main worker loop, gets data from the target generator and chunks it into sequences.
 
     Sequences are generated in a sliding window fashion. For example, if the data is
@@ -123,10 +122,6 @@ def worker_loop(redis_info, target, job_queue, res_queue, running, in_service, s
     m_pid = os.getpid()
 
     logger.log_debug(module_name, 'Worker ' + str(m_pid) + ' spawned with sequence length ' + str(seq_len))
-
-    if not redis_info is None and not reader.init_bbids(redis_info[0], redis_info[1], redis_info[2]):
-        logger.log_error(module_name, 'Worker ' + str(m_pid) + ' cannot connect to database, exiting...')
-        return
 
     while True:
         try:
@@ -177,8 +172,8 @@ def test_generator():
     import reader
     import tempfile
 
-    if len(argv) < 8:
-        print argv[0], '<input_file>', '<bin_dir>', '<memory_file>', '<seq_len>', '<redis_host>', '<redis_port>', '<redis_db>'
+    if len(argv) < 5:
+        print argv[0], '<input_file>', '<bin_dir>', '<memory_file>', '<seq_len>'
         exit(0)
 
     logger.log_start(logging.DEBUG)
@@ -189,9 +184,8 @@ def test_generator():
 
         filters.set_filters(['ret'])
         memory = reader.read_memory_file(argv[3])
-        redis_info = [argv[5], argv[6], argv[7]]
 
-        input, output = start_generator(redis_info, 2, reader.disasm_pt_file, seq_len=int(argv[4], 10))
+        input, output = start_generator(2, reader.disasm_pt_file, seq_len=int(argv[4], 10))
         input.put((None, argv[1], argv[2], memory))
         while True:
             try:
