@@ -79,11 +79,6 @@ def parse_args():
                                   help='Query KNN using evaluation files in this directory.')
     parser.add_option_group(parser_group_query)
 
-    parser_group_filter = OptionGroup(parser, 'Filter Options')
-    parser_group_filter.add_option('-b', '--blacklist', action='store', dest='bl_path', type='str', default=None,
-                                   help='Newline seperated list of PDF SHA256 hashes. Do not train or query these.')
-    parser.add_option_group(parser_group_filter)
-
     parser_group_redis = OptionGroup(parser, 'Redis Options')
     parser_group_redis.add_option('-r', '--use-redis', action='store_true', dest='use_redis', default=False,
                                   help='Store processed training samples in Redis. Omit training dir to train from these.')
@@ -111,24 +106,12 @@ def parse_args():
     if options.qdir and not os.path.isdir(options.qdir):
         sys.stderr.write(options.qdir + " is not a directory\n")
         errors = True
-    if options.bl_path and not os.path.isfile(options.bl_path):
-        sys.stderr.write(options.bl_path + " is not a file\n")
-        errors = True
 
     if errors:
         parser.print_help()
         sys.exit(1)
 
     return (options, args)
-
-def apply_blacklist(blacklist, files, values):
-    for index, name in enumerate(files):
-        for hash in blacklist:
-            if hash in name:
-                del files[index]
-                del values[index]
-                break
-    return (files, values)
 
 def to_redis(one_hot):
     """ Pack one hot array so it can be stored in Redis. """
@@ -156,10 +139,7 @@ def main():
 
     knn = NearestNeighbors(metric='cosine')
     conn = None
-    blacklist = None
 
-    if options.bl_path:
-        blacklist = [line.strip() for line in open(options.bl_path, 'r').readlines()]
     if options.use_redis:
         conn = redis.StrictRedis(options.redis_host, options.redis_port, options.redis_db)
     if options.tdir:
@@ -187,10 +167,6 @@ def main():
     qfiles = [res[0] for res in query]  # Removing files that couldn't be sliced
     query  = [res[1] for res in query]  # query is now only the one-hots
     pool.close()
-
-    if blacklist:
-        ifiles, train = apply_blacklist(blacklist, ifiles, train)
-        qfiles, query = apply_blacklist(blacklist, qfiles, query)
 
     assert len(ifiles) == len(train)
     assert len(qfiles) == len(query)

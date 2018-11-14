@@ -39,10 +39,6 @@ def parse_file(ifilepath):
     else:
         return (3, 0, 0, name)
 
-    for hash in blacklist:
-        if hash in name:
-            return (2, 0, 0, name)  # Blacklisted
-
     with gzip.open(ifilepath, 'r') as ifile:
         try:
             parts = [line.strip().split(',') for line in ifile.readlines()]
@@ -62,11 +58,9 @@ def parse_file(ifilepath):
 
 def main():
     """Main"""
-    global blacklist, threshold
+    global threshold
 
     parser = OptionParser(usage='Usage: %prog [options] eval_dir')
-    parser.add_option('-b', '--black-list', action='store', dest='blacklist', type='str', default=None,
-                      help='An optional filepath to a list of SHA256 hashes representing PDF files to skip')
     parser.add_option('-w', '--workers', action='store', dest='workers', type='int', default=cpu_count(),
                       help='Number of workers to use (default: number of cores)')
 
@@ -77,15 +71,10 @@ def main():
         sys.exit(1)
 
     idirpath = args[0]
-    blacklist = list()
 
     if not os.path.isdir(idirpath):
         sys.stderr.write('ERROR: ' + idirpath + " is not a directory\n")
         sys.exit(1)
-
-    if not options.blacklist is None:
-        with open(options.blacklist, 'r') as ifile:
-            blacklist = [name.strip() for name in ifile.readlines()]
 
     files = [os.path.join(idirpath, f) for f in os.listdir(idirpath) if os.path.isfile(os.path.join(idirpath, f))]
 
