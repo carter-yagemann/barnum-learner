@@ -103,6 +103,11 @@ def main():
         logger.log_stop()
         sys.exit(1)
 
+    if os.path.isfile(o_filepath + '.part'):
+        logger.log_error(module_name, 'ERROR: Partial preprocess file already exists')
+        logger.log_stop()
+        sys.exit(1)
+
     with gzip.open(o_filepath + '.part', 'wb') as ofile:
         for instr in reader.disasm_pt_file(trace_file, bin_dir, mem_map):
             if instr is None:
