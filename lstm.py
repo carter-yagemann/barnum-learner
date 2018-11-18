@@ -145,7 +145,7 @@ def map_to_model(samples, f):
             if sample_memory is None:
                 logger.log_warning(module_name, 'Failed to parse memory file, skipping')
                 continue
-            iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
+            iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory, options.timeout))
 
     # Get parsed sequences and feed them to the LSTM model
     batch_cnt = 0
@@ -280,7 +280,7 @@ def eval_model(eval_set):
                 if sample_memory is None:
                     logger.log_warning(module_name, 'Failed to parse memory file, skipping')
                     continue
-                iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory))
+                iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory, options.timeout))
 
             xs = []
             ys = []
@@ -357,6 +357,8 @@ if __name__ == '__main__':
                                  help='Write the picked samples to the provided file so these sets can be resused in future runs (see -i)')
     parser_group_data.add_option('-i', '--input-sets', action='store', dest='input_sets', type='string', default='',
                                  help='Instead of using train-size, test-size, and ratio, load the samples from this file (see -o).')
+    parser_group_data.add_option('--timeout', action='store', type='int', default=None,
+                                 help='If preprocessed (-p) not set, max seconds to spend disassembling one trace (default: infinite)')
     parser.add_option_group(parser_group_data)
 
     parser_group_lstm = OptionGroup(parser, 'LSTM Options')

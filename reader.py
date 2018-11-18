@@ -30,6 +30,7 @@ from struct import unpack
 import shutil
 import re
 from zlib import adler32
+from threading import Timer
 
 module_name = 'Reader'
 
@@ -177,7 +178,12 @@ def warn_and_debug(has_warned, warning, debug):
 
     return has_warned
 
-def disasm_pt_file(trace_path, bin_path, mem_mapping):
+def disasm_timeout(proc):
+    """ Termiantes ptxed proc and logs a warning message. """
+    logger.log_warning(module_name, "Timeout reached, terminating early")
+    proc.kill()
+
+def disasm_pt_file(trace_path, bin_path, mem_mapping, timeout=None):
     """ Disassembles a PT trace into instructions and yields tuples.
 
     Each tuple contains the following elements:
@@ -194,6 +200,7 @@ def disasm_pt_file(trace_path, bin_path, mem_mapping):
     trace_path -- The filepath to a raw PT trace (may be gzipped).
     bin_path -- The path to a directory containing binaries for use by the disassembler.
     mem_mapping -- A linear array of tuples in the form (start_address, end_address, source_file).
+    timeout -- If not None, the max number of seconds to disasm for.
 
     Yields:
     The tuples described above until EoF is reached, after which None is yielded.
@@ -256,10 +263,16 @@ def disasm_pt_file(trace_path, bin_path, mem_mapping):
     last_instr = None
 
     ptxed = subprocess.Popen(command, stdout=subprocess.PIPE, bufsize=1)
+    if not timeout is None:
+        watchdog = Timer(timeout, disasm_timeout, args=[ptxed])
+        watchdog.start()
 
     for line in ptxed.stdout:
         if re_block.match(line):
-            head, start, end,  instr = line.split(' ', 3)
+            try:
+                head, start, end,  instr = line.split(' ', 3)
+            except ValueError:
+                break  # Can happen if watchdog kills ptxed
 
             if last_instr is None:
                 # The first basic block doesn't have a previous block, skip it
@@ -278,6 +291,9 @@ def disasm_pt_file(trace_path, bin_path, mem_mapping):
                 has_warned = warn_and_debug(has_warned, warning_msg, 'Cannot find BBID for address ' + hex(dst_addr))
             last_instr = instr
             continue
+
+    if not timeout is None:
+        watchdog.cancel()
 
     delta_time = datetime.now() - start_time
     logger.log_info(module_name, 'Generated ' + str(count) + ' entries in ' + str(delta_time))

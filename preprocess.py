@@ -45,6 +45,10 @@ def pack_instr(instr):
 def main():
     # Parse input arguments
     parser = OptionParser(usage='Usage: %prog [options] trace_directory bin_directory')
+    parser.add_option('-f', '--force', action='store_true',
+                      help='If a complete or partial output already exists, overwrite it.')
+    parser.add_option('-t', '--timeout', action='store', type='int', default=None,
+                      help='Max seconds to run before quitting (default: infinite).')
     options, args = parser.parse_args()
 
     if len(args) < 2:
@@ -98,18 +102,18 @@ def main():
     # We're ready to parse the trace
     o_filepath = os.path.join(data_dir, 'trace_parsed.gz')
 
-    if os.path.isfile(o_filepath):
+    if os.path.isfile(o_filepath) and not options.force:
         logger.log_error(module_name, 'ERROR: Preprocess file already exists')
         logger.log_stop()
         sys.exit(1)
 
-    if os.path.isfile(o_filepath + '.part'):
+    if os.path.isfile(o_filepath + '.part') and not options.force:
         logger.log_error(module_name, 'ERROR: Partial preprocess file already exists')
         logger.log_stop()
         sys.exit(1)
 
     with gzip.open(o_filepath + '.part', 'wb') as ofile:
-        for instr in reader.disasm_pt_file(trace_file, bin_dir, mem_map):
+        for instr in reader.disasm_pt_file(trace_file, bin_dir, mem_map, options.timeout):
             if instr is None:
                 break
             ofile.write(pack_instr(instr))
