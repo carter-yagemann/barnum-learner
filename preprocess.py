@@ -112,12 +112,19 @@ def main():
         logger.log_stop()
         sys.exit(1)
 
+    entries = 0
     with gzip.open(o_filepath + '.part', 'wb') as ofile:
         for instr in reader.disasm_pt_file(trace_file, bin_dir, mem_map, options.timeout):
             if instr is None:
                 break
             ofile.write(pack_instr(instr))
-    os.rename(o_filepath + '.part', o_filepath)
+            entries += 1
+
+    if entries > 0:
+        os.rename(o_filepath + '.part', o_filepath)
+    else:
+        logger.log_error(module_name, 'ERROR: No output produced, empty file')
+        os.remove(o_filepath + '.part')
 
     logger.log_stop()
 
