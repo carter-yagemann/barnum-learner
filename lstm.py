@@ -18,7 +18,7 @@
 # along with Barnum.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
-from os import path
+from os import path, mkdir
 import logger
 import logging
 import reader
@@ -75,7 +75,7 @@ def load_sets():
                     set_key = line[1:-1]
                 else:
                     # Line should be the path to a trace directory
-                    if not root_dir in line:
+                    if not path.abspath(root_dir) in line:
                         logger.log_warning(module_name, 'Input data specified with -i must be in ' + str(root_dir) + ', skipping')
                         continue
                     if not path.isdir(line):
@@ -113,6 +113,13 @@ def build_model():
     model.add(Dense(options.max_classes))
     model.add(Activation('softmax'))
 
+    if not options.multi_gpu is None:
+        model = multi_gpu_model(model, gpus=options.multi_gpu)
+        # Keras splits batches evenly between GPUs. For example, if batch size is 64 and you're using
+        # 2 GPUs, each GPU will receive 32 samples per batch. When the user sets batch size, they
+        # probably expect it to be per-GPU, so we adjust accordingly.
+        options.batch_size *= options.multi_gpu
+
     opt = optimizers.RMSprop(lr=options.learning_rate, decay=options.learning_decay)
     model.compile(loss='sparse_categorical_crossentropy',
                   optimizer=opt,
@@ -145,7 +152,7 @@ def map_to_model(samples, f):
             if sample_memory is None:
                 logger.log_warning(module_name, 'Failed to parse memory file, skipping')
                 continue
-            iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory, options.timeout))
+            iqueue.put((None, sample['trace_filepath'], options.bin_dir, sample_memory, options.timeout))
 
     # Get parsed sequences and feed them to the LSTM model
     batch_cnt = 0
@@ -258,12 +265,17 @@ def test_model(testing_set):
 def eval_model(eval_set):
     """ Evaluate the LSTM model."""
     random.shuffle(eval_set)
-    temp_dir = tempfile.mkdtemp(suffix='-lstm-pt')
-    logger.log_info(module_name, 'Evaluation results will be written to ' + temp_dir)
+    if options.eval_dir is None:
+        eval_dir = tempfile.mkdtemp(suffix='-lstm-pt')
+    else:
+        if not path.exists(options.eval_dir):
+            mkdir(options.eval_dir)
+        eval_dir = options.eval_dir
+    logger.log_info(module_name, 'Evaluation results will be written to ' + eval_dir)
 
     for sample in eval_set:
         o_filename = sample['label'] + '-' + path.basename(sample['base_dir']) + '.gz'
-        o_filepath = path.join(temp_dir, o_filename)
+        o_filepath = path.join(eval_dir, o_filename)
         logger.log_debug(module_name, 'Writing to ' + o_filepath)
         with gzip.open(o_filepath, 'w') as ofile:
             if options.preprocess:
@@ -280,7 +292,7 @@ def eval_model(eval_set):
                 if sample_memory is None:
                     logger.log_warning(module_name, 'Failed to parse memory file, skipping')
                     continue
-                iqueue.put((None, sample['trace_filepath'], bin_dirpath, sample_memory, options.timeout))
+                iqueue.put((None, sample['trace_filepath'], options.bin_dir, sample_memory, options.timeout))
 
             xs = []
             ys = []
@@ -314,7 +326,7 @@ def eval_model(eval_set):
 if __name__ == '__main__':
 
     # Parse input arguments
-    parser = OptionParser(usage='Usage: %prog [options] pt_directory bin_directory')
+    parser = OptionParser(usage='Usage: %prog [options] pt_directory')
 
     parser_group_learn = OptionGroup(parser, 'Learning Options')
     parser_group_learn.add_option('--disable-ret', action='store_false', dest='learn_ret', default=True,
@@ -337,16 +349,20 @@ if __name__ == '__main__':
     parser_group_sys.add_option('-t', '--threads', action='store', dest='threads', type='int', default=cpu_count(),
                                 help='Number of threads to use when parsing PT traces (default: number of CPU cores)')
     parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32768,
-                                help='Size of the results queue, making this too large may exhaust memory (default 32768)')
+                                help='Size of the results queue, making this too large may exhaust memory (default: 32768)')
     parser_group_sys.add_option('--skip-test', action='store_true', dest='skip_test',
                                 help='Skip the generalization testing stage, useful when combined with saving to just make and store a model')
     parser_group_sys.add_option('--skip-eval', action='store_true', dest='skip_eval',
                                 help='Skip the evaluation stage, useful when combined with saving to just make and store a model')
+    parser_group_sys.add_option('--eval-dir', action='store', type='str', default=None,
+                                help='Directory to save evaluation results. If directory does not exist, it is created (default: new temp dir)')
     parser.add_option_group(parser_group_sys)
 
     parser_group_data = OptionGroup(parser, 'Data Options')
     parser_group_data.add_option('-p', '--preprocessed', action='store_true', dest='preprocess',
                                  help='Only use samples where a preprocessed trace is available')
+    parser_group_data.add_option('--bin-dir', action='store', type='str', default=None,
+                                 help='Path to directory of extracted binaries. Only needed if not using (-p).')
     parser_group_data.add_option('--train-size', action='store', dest='train_size', type='int', default=8,
                                  help='Number of traces to train on (default: 8)')
     parser_group_data.add_option('--test-size-benign', action='store', dest='test_size_b', type='int', default=2,
@@ -392,31 +408,29 @@ if __name__ == '__main__':
                                  help='Load the model from the provided filepath instead of building a new one')
     parser_group_lstm.add_option('--use-weights', action='store', dest='use_weights', type='string', default='',
                                  help='Load weights from the provided filepath (this will skip training and head straight to evaluation)')
+    parser_group_lstm.add_option('--multi-gpu', action='store', type='int', default=None,
+                                 help='Enable multi-GPU mode using the provided number of GPUs (default: disabled)')
     parser.add_option_group(parser_group_lstm)
 
     options, args = parser.parse_args()
 
-    if len(args) < 2:
+    if len(args) < 1:
         parser.print_help()
         sys.exit(0)
 
     # Keras likes to print $@!& to stdout, so don't import it until after the input parameters have been validated
     from keras.models import Model, Sequential, model_from_json
     from keras.layers import Dense, LSTM, Embedding, Activation, Dropout
+    from keras.utils import multi_gpu_model
     from keras import optimizers
 
     root_dir = args[0]
-    bin_dirpath = args[1]
 
     # Initialization
     logger.log_start(options.log_level)
 
     # Input validation
     errors = False
-    if not path.isdir(bin_dirpath):
-        logger.log_error(module_Name, 'bin_directory must be a directory')
-        errors = True
-
     if options.threads < 1:
         logger.log_error(module_name, 'Parsing requires at least 1 thread')
         errors = True
@@ -467,6 +481,22 @@ if __name__ == '__main__':
 
     if options.checkpoint_interval > 0 and len(options.save_weights) < 1:
         logger.log_error(module_name, 'Checkpointing requires --save-weights')
+        errors = True
+
+    if not options.eval_dir is None and path.isfile(options.eval_dir):
+        logger.log_error(module_name, 'Evaluation directory is a file, must be a directory')
+        errors = True
+
+    if not options.multi_gpu is None and options.multi_gpu < 2:
+        logger.log_error(module_name, 'Value for multi-GPU mode option must be at least 2')
+        errors = True
+
+    if not options.preprocess and options.bin_dir is None:
+        logger.log_error(module_name, 'Preprocessing (-p) is not set, so (--bin-dir) is required')
+        errors = True
+
+    if not options.bin_dir is None and not path.isdir(options.bin_dir):
+        logger.log_error(module_name, 'Binary directory (--bin-dir) must be a directory')
         errors = True
 
     if options.learn_ret:

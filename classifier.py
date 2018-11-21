@@ -27,6 +27,7 @@ from sklearn.svm import SVC
 import matplotlib
 matplotlib.use('Agg')  # Hack so X isn't required
 import matplotlib.pyplot as plt
+from sklearn.externals import joblib
 
 def parse_file(ifilepath):
     """Parse a single evaluation file"""
@@ -61,6 +62,10 @@ def main():
     global threshold
 
     parser = OptionParser(usage='Usage: %prog [options] eval_dir')
+    parser.add_option('-s', '--save', action='store', type='str', default=None,
+                      help='Save classifier to given filepath (default: no saving)')
+    parser.add_option('-p', '--plot', action='store', type='str', default=None,
+                      help='Save plot as a PNG image to the given filepath (default: no plotting)')
     parser.add_option('-w', '--workers', action='store', dest='workers', type='int', default=cpu_count(),
                       help='Number of workers to use (default: number of cores)')
 
@@ -111,20 +116,32 @@ def main():
     for sample in fns:
         sys.stdout.write(str(sample[0][3]) + "\n")
 
+    # Saving
+    if not options.save is None:
+        sys.stdout.write("Saving classifier\n")
+        try:
+            joblib.dump(svm, options.save)
+        except:
+            sys.stderr.write("Failed to save classifier to " + options.save + "\n")
+
     # Plotting
-    axes = plt.gca()
-    axes.set_xlim([0, 1])
-    axes.set_ylim([0, 1])
-    w = svm.coef_[0]
-    a = -w[0] / w[1]
-    xx = np.linspace(0, 1)
-    yy = a * xx - (svm.intercept_[0]) / w[1]
-    plt.scatter([sample[0][1] for sample in benign], [sample[0][2] for sample in benign], marker='o', c='blue')
-    plt.scatter([sample[0][1] for sample in malicious], [sample[0][2] for sample in malicious], marker='x', c='red')
-    plt.plot(xx, yy, 'k--')
-    plt.xlabel('Percent Wrong Prediction')
-    plt.ylabel('Average Confidence')
-    plt.savefig('summary.png')
+    if not options.plot is None:
+        axes = plt.gca()
+        axes.set_xlim([0, 1])
+        axes.set_ylim([0, 1])
+        w = svm.coef_[0]
+        a = -w[0] / w[1]
+        xx = np.linspace(0, 1)
+        yy = a * xx - (svm.intercept_[0]) / w[1]
+        plt.scatter([sample[0][1] for sample in benign], [sample[0][2] for sample in benign], marker='o', c='blue')
+        plt.scatter([sample[0][1] for sample in malicious], [sample[0][2] for sample in malicious], marker='x', c='red')
+        plt.plot(xx, yy, 'k--')
+        plt.xlabel('Wrong Prediction (%)')
+        plt.ylabel('Average Confidence (%)')
+        try:
+            plt.savefig(options.plot)
+        except:
+            sys.stderr.write("Failed to save plot\n")
 
 if __name__ == '__main__':
     main()

@@ -1,7 +1,2 @@
-/scripts
-/api/api_keys
-/api/celeryconfig.py
-/api/cert.pem
-/api/key.pem
 *.pyc
 *.swp

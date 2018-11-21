@@ -40,7 +40,8 @@ the [repo](https://github.com/intelxed/xed). After that, build `ptxed`:
     make
     # Add ptxed/build/bin to your PATH
 
-Finally, a Redis database is needed to use `knn.py`. Most GNU/Linux distributions already
+Finally, a Redis database is needed to use `knn.py`. If you are not interested in
+clustering, this step can be skipped.  Most GNU/Linux distributions already
 have a package. For example, on Debian:
 
     sudo apt install redis-server
@@ -97,7 +98,8 @@ You can then run your testing and/or evaluation without needing to retrain:
 ## Performance
 
 If you're using a GPU enabled framework, adjusting the batch size (`-b`) can
-significantly improve performance.
+significantly improve performance. There's also the `--multi-gpu` option in
+`lstm.py` if your system has multiple GPUs.
 
 ## Reusing Previous Sets
 
