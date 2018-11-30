@@ -197,6 +197,7 @@ def train_model(training_set):
 
     res = [0.0] * len(model.metrics_names)
     batches = 0
+    num_samples = len(training_set)
     for status in map_to_model(training_set, model.train_on_batch):
         if status is None:
             break
@@ -206,7 +207,8 @@ def train_model(training_set):
         # Print current metrics every minute
         if (datetime.now() - last_s).total_seconds() > freq_s:
             c_metrics = [status / batches for status in res]
-            c_metrics_str = ', '.join([str(model.metrics_names[x]) + ' ' + str(c_metrics[x]) for x in range(len(c_metrics))])
+            c_metrics_str = ', '.join([str(model.metrics_names[x]) + ' ' + '%.12f' % (c_metrics[x]) for x in range(len(c_metrics))])
+            c_metrics_str += ', progress %.4f' % (float(generator.fin_tasks.value) / float(num_samples))
             logger.log_info(module_name, 'Status: ' + c_metrics_str)
             last_s = datetime.now()
         # Save current weights at user specified frequency
@@ -239,6 +241,7 @@ def test_model(testing_set):
 
     res = [0.0] * len(model.metrics_names)
     batches = 0
+    num_samples = len(testing_set)
 
     for status in map_to_model(testing_set, model.test_on_batch):
         if status is None:
@@ -249,7 +252,8 @@ def test_model(testing_set):
         # Print current metrics every minute
         if (datetime.now() - last_s).total_seconds() > freq_s:
             c_metrics = [status / batches for status in res]
-            c_metrics_str = ', '.join([str(model.metrics_names[x]) + ' ' + str(c_metrics[x]) for x in range(len(c_metrics))])
+            c_metrics_str = ', '.join([str(model.metrics_names[x]) + ' ' + '%.12f' % (c_metrics[x]) for x in range(len(c_metrics))])
+            c_metrics_str += ', progress %.4f' % (float(generator.fin_tasks.value) / float(num_samples))
             logger.log_info(module_name, 'Status: ' + c_metrics_str)
             last_s = datetime.now()
 

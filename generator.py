@@ -34,6 +34,7 @@ module_name = 'Generator'
 gen_workers = []
 in_service = []
 running = Value('b', False)
+fin_tasks = Value('i', 0)
 
 def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
     """ Starts up a generator for dispatching jobs to the target function.
@@ -68,6 +69,7 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
     job_queue = Queue()
     res_queue = Queue(res_queue_max)
     running.value = True
+    fin_tasks.value = 0
     for id in range(num_workers):
         in_service.append(Value('b', False))
         worker_args = (target, job_queue, res_queue, running, in_service[id], int(seq_len))
@@ -165,6 +167,8 @@ def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1):
             logger.log_error(module_name, 'Error while processing job in worker ' + str(m_pid) + "\n" + str(traceback.format_exc()))
 
         logger.log_debug(module_name, 'Finished job in worker ' + str(m_pid) + ' in ' + str(datetime.now() - start_time))
+        with fin_tasks.get_lock():
+            fin_tasks.value += 1
         in_service.value = False
 
 def test_generator():
