@@ -62,6 +62,8 @@ def main():
     global threshold
 
     parser = OptionParser(usage='Usage: %prog [options] eval_dir')
+    parser.add_option('-f', '--force', action='store_true',
+                      help='Force threshold to produce no false positives (benign classified as malicious)')
     parser.add_option('-s', '--save', action='store', type='str', default=None,
                       help='Save classifier to given filepath (default: no saving)')
     parser.add_option('-p', '--plot', action='store', type='str', default=None,
@@ -89,25 +91,34 @@ def main():
     ys = np.array([sample[0] for sample in data])
     xs = np.array([sample[1:3] for sample in data])
 
-    # SVM (we're going to force it to have 0 FP)
-    fp = 1.0
-    weight = 10.0
+    if options.force:
+        # SVM (we're going to force it to have 0 FP)
+        fp = 1.0
+        weight = 10.0
 
-    while fp > 0.0 and weight > 0.0000001:
+        while fp > 0.0 and weight > 0.0000001:
 
-        svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
+            svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
+            svm.fit(xs, ys)
+            weight *= 0.999
+
+            results = [[sample, svm.predict([sample[1:3]])] for sample in data]
+            benign = [sample for sample in results if sample[0][0] == 0]
+            fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
+            fp = float(len(fps)) / float(len(benign))
+    else:
+        svm = SVC(kernel='linear')
         svm.fit(xs, ys)
-        weight *= 0.999
 
-        # Metrics
-        results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-        benign = [sample for sample in results if sample[0][0] == 0]
-        malicious = [sample for sample in results if sample[0][0] == 1]
-        fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-        fns = [sample for sample in results if sample[0][0] == 1 and sample[1] == 0]
+    # Metrics
+    results = [[sample, svm.predict([sample[1:3]])] for sample in data]
+    benign = [sample for sample in results if sample[0][0] == 0]
+    malicious = [sample for sample in results if sample[0][0] == 1]
+    fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
+    fns = [sample for sample in results if sample[0][0] == 1 and sample[1] == 0]
 
-        fp = float(len(fps)) / float(len(benign))
-        fn = float(len(fns)) / float(len(malicious))
+    fp = float(len(fps)) / float(len(benign))
+    fn = float(len(fns)) / float(len(malicious))
 
     sys.stdout.write("FP: " + str(fp) + "\n")
     sys.stdout.write("FN: " + str(fn) + "\n")
