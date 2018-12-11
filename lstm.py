@@ -34,7 +34,7 @@ import tempfile
 import gzip
 
 module_name = 'LSTM'
-module_version = '1.1.1'
+module_version = '1.1.2'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -216,6 +216,7 @@ def train_model(training_set):
         # Save current weights at user specified frequency
         if freq_c > 0 and (datetime.now() - last_c).total_seconds() > freq_c:
             logger.log_debug(module_name, 'Checkpointing weights')
+            c_metrics = [status / batches for status in res]
             if not options.checkpoint_best or c_metrics[0] < last_b:
                 try:
                     model.save_weights(options.save_weights)
@@ -226,7 +227,7 @@ def train_model(training_set):
                 logger.log_info(module_name, 'Loss did not improve between checkpoints, early stopping and restoring last weights')
                 generator.stop_generator(10)
                 try:
-                    model.load_weights(options.use_weights)
+                    model.load_weights(options.save_weights)
                 except:
                     clean_exit(EXIT_RUNTIME_ERROR, "Failed to load LSTM weights:\n" + str(traceback.format_exc()))
                 return
