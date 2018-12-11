@@ -1,5 +1,9 @@
 # Overview
 
+Barnum-Learner uses traces collected by [Barnum-Tracer](https://github.com/carter-yagemann/barnum-tracer)
+to detect program anomalies. Together, these two parts form Barnum: an end-to-end
+system for program control-flow anomaly detection.
+
 This system determines if traces of a target program are anomalous
 using a two-layer classification.
 
