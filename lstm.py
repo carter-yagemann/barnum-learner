@@ -34,6 +34,7 @@ import tempfile
 import gzip
 
 module_name = 'LSTM'
+module_version = '1.1.0'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -191,6 +192,7 @@ def train_model(training_set):
     # Checkpointing for saving model weights
     freq_c = options.checkpoint_interval * 60
     last_c = datetime.now()
+    last_b = 10000
     # For reporting current metrics
     freq_s = options.status_interval * 60
     last_s = datetime.now()
@@ -214,11 +216,21 @@ def train_model(training_set):
         # Save current weights at user specified frequency
         if freq_c > 0 and (datetime.now() - last_c).total_seconds() > freq_c:
             logger.log_debug(module_name, 'Checkpointing weights')
-            try:
-                model.save_weights(options.save_weights)
-            except:
+            if not options.checkpoint_best or c_metrics[0] < last_b:
+                try:
+                    model.save_weights(options.save_weights)
+                except:
+                    generator.stop_generator(10)
+                    clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
+            if options.checkpoint_es and c_metrics[0] > last_b:
+                logger.log_info(module_name, 'Loss did not improve between checkpoints, early stopping and restoring last weights')
                 generator.stop_generator(10)
-                clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
+                try:
+                    model.load_weights(options.use_weights)
+                except:
+                    clean_exit(EXIT_RUNTIME_ERROR, "Failed to load LSTM weights:\n" + str(traceback.format_exc()))
+                return
+            last_b = c_metrics[0]
             last_c = datetime.now()
 
     if batches < 1:
@@ -330,7 +342,7 @@ def eval_model(eval_set):
 if __name__ == '__main__':
 
     # Parse input arguments
-    parser = OptionParser(usage='Usage: %prog [options] pt_directory')
+    parser = OptionParser(usage='Usage: %prog [options] pt_directory', version='Barnum LSTM ' + module_version)
 
     parser_group_learn = OptionGroup(parser, 'Learning Options')
     parser_group_learn.add_option('--disable-ret', action='store_false', dest='learn_ret', default=True,
@@ -408,6 +420,10 @@ if __name__ == '__main__':
                                  help='Save the weights after training to the provided filepath in H5 format')
     parser_group_lstm.add_option('--checkpoint', action='store', dest='checkpoint_interval', type='int', default=0,
                                  help='Save current weights every X minutes (default: only save after training)')
+    parser_group_lstm.add_option('--checkpoint-best', action='store_true', dest='checkpoint_best',
+                                 help='At checkpoint, only save weights if loss improved.')
+    parser_group_lstm.add_option('--checkpoint-early-stop', action='store_true', dest='checkpoint_es',
+                                 help='If loss does not improve between checkpoints, stop and restore previous weights.')
     parser_group_lstm.add_option('--use-model', action='store', dest='use_model', type='string', default='',
                                  help='Load the model from the provided filepath instead of building a new one')
     parser_group_lstm.add_option('--use-weights', action='store', dest='use_weights', type='string', default='',
@@ -451,16 +467,8 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'Epochs must be at least 1')
         errors = True
 
-    if options.train_size < 1:
+    if options.use_model == '' and options.train_size < 1:
         logger.log_error(module_name, 'Training size must be at least 1')
-        errors = True
-
-    if options.test_size_b < 1:
-        logger.log_error(module_name, 'Benign test size must be at least 1')
-        errors = True
-
-    if options.test_size_m < 1:
-        logger.log_error(module_name, 'Malicious test size must be at least 1')
         errors = True
 
     if options.units < 1:
@@ -502,6 +510,9 @@ if __name__ == '__main__':
     if not options.bin_dir is None and not path.isdir(options.bin_dir):
         logger.log_error(module_name, 'Binary directory (--bin-dir) must be a directory')
         errors = True
+
+    if options.checkpoint > 0 and (options.checkpoint_best or options.checkpoint_es):
+        logger.log_warning(module_name, 'Setting --checkpoint-best or --checkpoint-early-stop without --checkpoint does nothing')
 
     if options.learn_ret:
         filters.add_filter('ret')
@@ -598,7 +609,6 @@ if __name__ == '__main__':
 
     # Train model if user didn't already provide weights
     if len(options.use_weights) == 0:
-        prev_loss = 10000
         for epoch in range(options.epochs):
             logger.log_info(module_name, 'Starting training epoch ' + str(epoch + 1))
             try:
@@ -607,11 +617,8 @@ if __name__ == '__main__':
                 clean_exit(EXIT_USER_INTERRUPT, 'Keyboard interrupt, cleaning up...', True)
             except:
                 clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
-            if curr_loss > prev_loss:
-                logger.log_info(module_name, "Loss metric didn't improve, stopping early")
+            if curr_loss is None:  # Training early stopped mid-epoch
                 break
-            else:
-                prev_loss = curr_loss
     else:
         logger.log_info(module_name, 'Restoring LSTM weights from provided filepath')
         try:
