@@ -66,6 +66,8 @@ def main():
                       help='Force threshold to produce no false positives (benign classified as malicious)')
     parser.add_option('-s', '--save', action='store', type='str', default=None,
                       help='Save classifier to given filepath (default: no saving)')
+    parser.add_option('-c', '--csv', action='store', type='str', default=None,
+                      help='Save CSV of results to given filepath (default: no CSV)')
     parser.add_option('-p', '--plot', action='store', type='str', default=None,
                       help='Save plot as a PNG image to the given filepath (default: no plotting)')
     parser.add_option('-w', '--workers', action='store', dest='workers', type='int', default=cpu_count(),
@@ -127,7 +129,18 @@ def main():
     for sample in fns:
         sys.stdout.write(str(sample[0][3]) + "\n")
 
-    # Saving
+    # Saving CSV
+    if not options.csv is None:
+        sys.stdout.write("Saving CSV to " + options.csv + "\n")
+        try:
+            with open(options.csv, 'w') as csv_file:
+                csv_file.write("true_label,pred_label,name\n")
+                for result in results:
+                    csv_file.write(','.join([str(result[0][0]), str(result[1][0]), result[0][3]]) + "\n")
+        except Exception as ex:
+            sys.stderr.write("Failed to save CSV: " + str(ex) + "\n")
+
+    # Saving Classifier
     if not options.save is None:
         sys.stdout.write("Saving classifier\n")
         try:
