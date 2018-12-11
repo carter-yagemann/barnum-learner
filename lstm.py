@@ -34,7 +34,7 @@ import tempfile
 import gzip
 
 module_name = 'LSTM'
-module_version = '1.1.0'
+module_version = '1.1.1'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -448,6 +448,7 @@ if __name__ == '__main__':
 
     # Initialization
     logger.log_start(options.log_level)
+    logger.log_info(module_name, "Barnum LSTM " + module_version)
 
     # Input validation
     errors = False
@@ -511,7 +512,7 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'Binary directory (--bin-dir) must be a directory')
         errors = True
 
-    if options.checkpoint > 0 and (options.checkpoint_best or options.checkpoint_es):
+    if options.checkpoint_interval == 0 and (options.checkpoint_best or options.checkpoint_es):
         logger.log_warning(module_name, 'Setting --checkpoint-best or --checkpoint-early-stop without --checkpoint does nothing')
 
     if options.learn_ret:
