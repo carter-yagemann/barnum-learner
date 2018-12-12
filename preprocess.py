@@ -34,12 +34,13 @@ def unpack_instr(instr):
     parts = unpack(fmt_str, instr[:19])
     s_str = instr[19:19 + parts[2]]
     l_str = instr[19 + parts[2]:]
-    return (parts[0], parts[1], s_str, l_str.split(' '), parts[4])
+    return (parts[0], parts[1], s_str.decode(), l_str.decode().split(' '), parts[4])
 
 def pack_instr(instr):
     """Packs an instruction for writing to file"""
-    i_str = ' '.join(instr[3])
-    packed = pack(fmt_str, instr[0], instr[1], len(instr[2]), len(i_str), instr[4]) + instr[2] + i_str
+    i_str = ' '.join(instr[3]).encode('utf-8')
+    s_str = instr[2].encode('utf-8')
+    packed = pack(fmt_str, instr[0], instr[1], len(s_str), len(i_str), instr[4]) + s_str + i_str
     return pack("H", len(packed)) + packed
 
 def main():

@@ -115,7 +115,7 @@ def read_memory_file(filepath):
 
     # Decompress file if necessary
     if filepath[-3:] == '.gz':
-        ifile = gzip.open(filepath, 'r')
+        ifile = gzip.open(filepath, 'rt')
     else:
         ifile = open(filepath, 'r')
 
@@ -164,7 +164,7 @@ def get_bbid(addr):
     if map is None:
         return None # Failed to find memory region this address belongs to
     offset = addr - map[0]
-    return (abs(adler32(map[2])) << 32) + offset
+    return (abs(adler32(map[2].encode('utf-8'))) << 32) + offset
 
 def warn_and_debug(has_warned, warning, debug):
     """ Prints a debug message and also generates a generic warning message if one hasn't
@@ -270,6 +270,7 @@ def disasm_pt_file(trace_path, bin_path, mem_mapping, timeout=None):
         watchdog.start()
 
     for line in ptxed.stdout:
+        line = line.decode()
         if re_block.match(line):
             try:
                 head, start, end,  instr = line.split(' ', 3)
