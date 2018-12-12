@@ -17,6 +17,8 @@
 # You should have received a copy of the GNU General Public License
 # along with Barnum.  If not, see <https://www.gnu.org/licenses/>.
 
+from __future__ import print_function
+
 import logger
 import logging
 import reader
@@ -27,7 +29,10 @@ import os
 import traceback
 from copy import deepcopy
 from time import sleep
-from Queue import Empty
+if sys.version_info.major <= 2:
+    from Queue import Empty
+else:
+    from queue import Empty
 
 module_name = 'Generator'
 
@@ -177,7 +182,7 @@ def test_generator():
     import tempfile
 
     if len(argv) < 5:
-        print argv[0], '<input_file>', '<bin_dir>', '<memory_file>', '<seq_len>'
+        print(argv[0], '<input_file>', '<bin_dir>', '<memory_file>', '<seq_len>')
         exit(0)
 
     logger.log_start(logging.DEBUG)

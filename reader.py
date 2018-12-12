@@ -17,6 +17,8 @@
 # You should have received a copy of the GNU General Public License
 # along with Barnum.  If not, see <https://www.gnu.org/licenses/>.
 
+from __future__ import print_function
+
 import logger
 import logging
 import utils
@@ -346,7 +348,7 @@ def test_reader():
     import traceback
 
     if len(argv) < 4:
-        print argv[0], '<input_file>', '<memory_file>', '<bin_dir>'
+        print(argv[0], '<input_file>', '<memory_file>', '<bin_dir>')
         exit(0)
 
     logger.log_start(logging.DEBUG)
