@@ -19,6 +19,8 @@
 
 import sys
 import os
+import logger
+import logging
 from optparse import OptionParser
 import gzip
 from multiprocessing import Pool, cpu_count
@@ -28,6 +30,9 @@ import matplotlib
 matplotlib.use('Agg')  # Hack so X isn't required
 import matplotlib.pyplot as plt
 from sklearn.externals import joblib
+
+module_name = 'Classifier'
+module_version = '1.0.1'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -50,7 +55,7 @@ def parse_file(ifilepath):
             accuracy = [int(part[0]) for part in parts]
             confidence = [float(part[2]) for part in parts if part[0] == '0']
         except IOError:
-            sys.stderr.write('WARNING: Failed to parse ' + ifilepath + "\n")
+            logger.log_error(module_name, 'WARNING: Failed to parse ' + ifilepath)
             return (3, 0, 0, name)
 
     if len(accuracy) == 0 or len(confidence) == 0:
@@ -65,7 +70,7 @@ def main():
     """Main"""
     global threshold
 
-    parser = OptionParser(usage='Usage: %prog [options] eval_dir')
+    parser = OptionParser(usage='Usage: %prog [options] eval_dir', version='Barnum Classifier ' + module_version)
     parser.add_option('-f', '--force', action='store_true',
                       help='Force threshold to produce no false positives (benign classified as malicious)')
     parser.add_option('-s', '--save', action='store', type='str', default=None,
@@ -85,10 +90,14 @@ def main():
         parser.print_help()
         sys.exit(ERROR_INVALID_ARG)
 
+    logger.log_start(20)
+    logger.log_info(module_name, 'Barnum Classifier ' + module_version)
+
     idirpath = args[0]
 
     if not os.path.isdir(idirpath):
-        sys.stderr.write('ERROR: ' + idirpath + " is not a directory\n")
+        logger.log_error(module_name, 'ERROR: ' + idirpath + " is not a directory")
+        logger.log_stop()
         sys.exit(ERROR_INVALID_ARG)
 
     files = [os.path.join(idirpath, f) for f in os.listdir(idirpath) if os.path.isfile(os.path.join(idirpath, f))]
@@ -121,11 +130,12 @@ def main():
             svm.fit(xs, ys)
     else:
         # Use a previously saved classifier
-        sys.stdout.write("Loading classifier from " + options.load + "\n")
+        logger.log_info(module_name, "Loading classifier from " + options.load)
         try:
             svm = joblib.load(options.load)
         except Exception as ex:
-            sys.stderr.write("Failed to load classifier: " + str(ex) + "\n")
+            logger.log_error(module_name, "Failed to load classifier: " + str(ex))
+            logger.log_stop()
             sys.exit(ERROR_RUNTIME)
 
     # Metrics
@@ -138,33 +148,33 @@ def main():
     fp = float(len(fps)) / float(len(benign))
     fn = float(len(fns)) / float(len(malicious))
 
-    sys.stdout.write("\n----------\n")
-    sys.stdout.write("FP: " + str(fp) + "\n")
-    sys.stdout.write("FN: " + str(fn) + "\n")
+    logger.log_info(module_name, "----------")
+    logger.log_info(module_name, "FP: " + str(fp))
+    logger.log_info(module_name, "FN: " + str(fn))
 
-    sys.stdout.write("\nFalse Negatives:\n\n")
+    logger.log_info(module_name, "False Negatives:")
     for sample in fns:
-        sys.stdout.write(str(sample[0][3]) + "\n")
-    sys.stdout.write("----------\n\n")
+        logger.log_info(module_name, '    ' + str(sample[0][3]))
+    logger.log_info(module_name, "----------")
 
     # Saving CSV
     if not options.csv is None:
-        sys.stdout.write("Saving CSV to " + options.csv + "\n")
+        logger.log_info(module_name, "Saving CSV to " + options.csv)
         try:
             with open(options.csv, 'w') as csv_file:
                 csv_file.write("true_label,pred_label,name\n")
                 for result in results:
                     csv_file.write(','.join([str(result[0][0]), str(result[1][0]), result[0][3]]) + "\n")
         except Exception as ex:
-            sys.stderr.write("Failed to save CSV: " + str(ex) + "\n")
+            module.log_error(module_name, "Failed to save CSV: " + str(ex))
 
     # Saving Classifier
     if not options.save is None:
-        sys.stdout.write("Saving classifier\n")
+        logger.log_info(module_name, "Saving classifier")
         try:
             joblib.dump(svm, options.save)
         except:
-            sys.stderr.write("Failed to save classifier to " + options.save + "\n")
+            logger.log_error(module_name, "Failed to save classifier to " + options.save)
 
     # Plotting
     if not options.plot is None:
@@ -183,7 +193,9 @@ def main():
         try:
             plt.savefig(options.plot)
         except:
-            sys.stderr.write("Failed to save plot\n")
+            logger.log_error(module_name, "Failed to save plot")
+
+    logger.log_stop()
 
 if __name__ == '__main__':
     main()

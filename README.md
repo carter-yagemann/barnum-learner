@@ -49,9 +49,10 @@ the [repo](https://github.com/intelxed/xed). After that, build `ptxed`:
     make
     # Add ptxed/build/bin to your PATH
 
-Finally, a Redis database is needed to use `cluster.py`. If you are not interested in
-clustering, this step can be skipped.  Most GNU/Linux distributions already
-have a package. For example, on Debian:
+Finally, a Redis database is needed to store vectors created by `cluster.py`
+across query sessions. If you are not interested in clustering or do not
+care about persisting training vectors across sessions, this step can be skipped.
+Most GNU/Linux distributions already have a package. For example, on Debian:
 
     sudo apt install redis-server
 

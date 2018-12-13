@@ -54,6 +54,7 @@ def log_start(level):
     logger_running = Value('b', True)
 
     logger_process = Process(target=log_worker)
+    logger_process.daemon = True
     logger_process.start()
 
 def log_stop():

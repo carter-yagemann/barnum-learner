@@ -19,6 +19,8 @@
 
 import sys
 import os
+import logging
+import logger
 import gzip
 import struct
 from multiprocessing import Pool, cpu_count
@@ -27,6 +29,13 @@ from optparse import OptionParser, OptionGroup
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 import redis
+
+module_name = 'Cluster'
+module_version = '1.0.1'
+
+# Error Codes
+ERROR_INVALID_ARG = 1
+ERROR_RUNTIME     = 2
 
 def moving_average(a, n):
     """ Moving average of a with window size n."""
@@ -65,7 +74,7 @@ def process_eval(args):
     return (ifile, one_hot)
 
 def parse_args():
-    parser = OptionParser(usage='Usage: %prog [options]')
+    parser = OptionParser(usage='Usage: %prog [options]', version='Barnum Cluster ' + module_version)
 
     parser_group_sys = OptionGroup(parser, 'System Options')
     parser_group_sys.add_option('-w', '--workers', action='store', type='int', default=cpu_count(),
@@ -116,7 +125,7 @@ def parse_args():
 
     if errors:
         parser.print_help()
-        sys.exit(1)
+        sys.exit(ERROR_INVALID_ARG)
 
     return (options, args)
 
@@ -144,6 +153,9 @@ def save_redis(conn, ifiles, one_hots):
 def main():
     options, args = parse_args()
 
+    logger.log_start(20)
+    logger.log_info(module_name, 'Barnum Cluster ' + module_version)
+
     knn = NearestNeighbors(metric='cosine')
     conn = None
 
@@ -156,7 +168,7 @@ def main():
     qfiles = [file for file in qfiles if len(file) >= 3 and os.path.isfile(file) and file[-3:] == '.gz']
 
     pool = Pool(options.workers)
-    sys.stdout.write("Generating training inputs\n")
+    logger.log_info(module_name, "Generating training inputs")
     if options.tdir:
         p_args = zip(ifiles, [options.max_val] * len(ifiles))
         train  = [res for res in pool.map(process_eval, p_args) if res[1]]
@@ -165,10 +177,11 @@ def main():
     elif conn:
         ifiles, train = load_redis(conn)
     else:  # This should never happen
-        sys.stderr.write("No training directory or Redis connection, cannot continue\n")
+        logger.log_error(module_name, "No training directory or Redis connection, cannot continue")
         pool.close()
-        sys.exit(1)
-    sys.stdout.write("Generating query inputs\n")
+        logger.log_stop()
+        sys.exit(ERROR_RUNTIME)
+    logger.log_info(module_name, "Generating query inputs")
     p_args = zip(qfiles, [options.max_val] * len(qfiles))
     query  = [res for res in pool.map(process_eval, p_args) if res[1]]
     qfiles = [res[0] for res in query]  # Removing files that couldn't be sliced
@@ -180,10 +193,10 @@ def main():
 
     # Note: if only conn, no need to save because samples are already from Redis!
     if conn and options.tdir:
-        sys.stdout.write("Saving processed training samples to Redis\n")
+        logger.log_info(module_name, "Saving processed training samples to Redis")
         save_redis(conn, ifiles, train)
 
-    sys.stdout.write("Training clustering\n")
+    logger.log_info(module_name, "Training clustering")
     knn.fit(train)
 
     if not options.csv is None:
@@ -191,11 +204,13 @@ def main():
         csv_file.write("query,nearest,distance\n")
 
     for index, file in enumerate(qfiles):
-        sys.stdout.write(file + "\n")
+        logger.log_info(module_name, file)
         nn = knn.kneighbors([query[index]], 1, True)
-        sys.stdout.write("    " + str(nn[0][0][0]) + " " + str(ifiles[nn[1][0][0]]) + "\n")
+        logger.log_info(module_name, "    " + str(nn[0][0][0]) + " " + str(ifiles[nn[1][0][0]]))
         if not options.csv is None:
             csv_file.write(os.path.basename(file) + ',' + os.path.basename(str(ifiles[nn[1][0][0]])) + ',' + str(nn[0][0][0]) + "\n")
+
+    logger.log_stop()
 
 if __name__ == '__main__':
     main()
