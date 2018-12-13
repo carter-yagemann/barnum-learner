@@ -21,7 +21,7 @@ import sys
 import os
 import gzip
 import struct
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 from optparse import OptionParser, OptionGroup
 
 import numpy as np
@@ -67,16 +67,23 @@ def process_eval(args):
 def parse_args():
     parser = OptionParser(usage='Usage: %prog [options]')
 
+    parser_group_sys = OptionGroup(parser, 'System Options')
+    parser_group_sys.add_option('-w', '--workers', action='store', type='int', default=cpu_count(),
+                                help='Max number of worker threads to use (default: number of cores)')
+    parser.add_option_group(parser_group_sys)
+
     parser_group_train = OptionGroup(parser, 'Training Options')
     parser_group_train.add_option('-t', '--train-dir', action='store', dest='tdir', type='str', default=None,
-                                  help='Train KNN using evaluation files in this directory.')
+                                  help='Train clustering using evaluation files in this directory.')
     parser_group_train.add_option('-m', '--max-val', action='store', dest='max_val', type='int', default=1024,
                                   help='This should match the --max-classes param from lstm.py and prob.py (default: 1024)')
     parser.add_option_group(parser_group_train)
 
     parser_group_query = OptionGroup(parser, 'Query Options')
     parser_group_query.add_option('-q', '--query-dir', action='store', dest='qdir', type='str', default=None,
-                                  help='Query KNN using evaluation files in this directory.')
+                                  help='Query clustering using evaluation files in this directory.')
+    parser_group_query.add_option('-c', '--csv', action='store', type='str', default=None,
+                                  help='Write output as CSV to given filepath (default: no CSV)')
     parser.add_option_group(parser_group_query)
 
     parser_group_redis = OptionGroup(parser, 'Redis Options')
@@ -148,7 +155,7 @@ def main():
     qfiles = [os.path.join(options.qdir, file) for file in os.listdir(options.qdir)]
     qfiles = [file for file in qfiles if len(file) >= 3 and os.path.isfile(file) and file[-3:] == '.gz']
 
-    pool = Pool()
+    pool = Pool(options.workers)
     sys.stdout.write("Generating training inputs\n")
     if options.tdir:
         p_args = zip(ifiles, [options.max_val] * len(ifiles))
@@ -176,13 +183,19 @@ def main():
         sys.stdout.write("Saving processed training samples to Redis\n")
         save_redis(conn, ifiles, train)
 
-    sys.stdout.write("Training KNN\n")
+    sys.stdout.write("Training clustering\n")
     knn.fit(train)
+
+    if not options.csv is None:
+        csv_file = open(options.csv, 'w')
+        csv_file.write("query,nearest,distance\n")
 
     for index, file in enumerate(qfiles):
         sys.stdout.write(file + "\n")
         nn = knn.kneighbors([query[index]], 1, True)
         sys.stdout.write("    " + str(nn[0][0][0]) + " " + str(ifiles[nn[1][0][0]]) + "\n")
+        if not options.csv is None:
+            csv_file.write(os.path.basename(file) + ',' + os.path.basename(str(ifiles[nn[1][0][0]])) + ',' + str(nn[0][0][0]) + "\n")
 
 if __name__ == '__main__':
     main()
