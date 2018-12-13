@@ -31,7 +31,7 @@ from sklearn.neighbors import NearestNeighbors
 import redis
 
 module_name = 'Cluster'
-module_version = '1.0.1'
+module_version = '1.1.0'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -44,7 +44,7 @@ def moving_average(a, n):
     return ret[n - 1:] / n
 
 def slice(array, window=10000, threshold=0.1):
-    """ Slices array from the first index where the moving average falls belong the threshold to the last.
+    """ Slices array from the first index where the moving average falls below the threshold to the last.
 
     Resulting slice is a slight over-approximation. If the moving average never falls below the threshold,
     the original array is returned.
@@ -59,12 +59,13 @@ def slice(array, window=10000, threshold=0.1):
     return (start, end)
 
 def process_eval(args):
-    ifile, max_bbid = args
+    ifile, options = args
+    max_bbid = options.max_val
     # For each prediction, 1 if correct, 0 if wrong
     res = [int(line.split(',', 1)[0]) for line in gzip.open(ifile, 'rt').readlines()]
     bbs = [int(line[::-1].split(',', 1)[0][::-1]) for line in gzip.open(ifile, 'rt').readlines()]
-    start, end = slice(res)
-    if len(res[start:end]) == len(res):
+    start, end = slice(res, options.window, options.threshold)
+    if len(res[start:end]) == len(res) and not options.allow_ft:
         return (ifile, None)  # Could not take slice at given threshold
     one_hot = [0] * max_bbid
     for bb in bbs[start:end]:
@@ -79,12 +80,18 @@ def parse_args():
     parser_group_sys = OptionGroup(parser, 'System Options')
     parser_group_sys.add_option('-w', '--workers', action='store', type='int', default=cpu_count(),
                                 help='Max number of worker threads to use (default: number of cores)')
+    parser_group_sys.add_option('-a', '--allow-full-traces', dest='allow_ft', action='store_true',
+                                help="If a slice isn't found, vectorize the whole trace (default: require slice)")
+    parser_group_sys.add_option('--threshold', action='store', type='float', default=0.1,
+                                help='Slicing threshold (default: 0.1)')
+    parser_group_sys.add_option('--window', action='store', type='int', default=10000,
+                                help='Window size to use when slicing (default: 10000)')
     parser.add_option_group(parser_group_sys)
 
     parser_group_train = OptionGroup(parser, 'Training Options')
     parser_group_train.add_option('-t', '--train-dir', action='store', dest='tdir', type='str', default=None,
                                   help='Train clustering using evaluation files in this directory.')
-    parser_group_train.add_option('-m', '--max-val', action='store', dest='max_val', type='int', default=1024,
+    parser_group_train.add_option('-m', '--max-value', action='store', dest='max_val', type='int', default=1024,
                                   help='This should match the --max-classes param from lstm.py and prob.py (default: 1024)')
     parser.add_option_group(parser_group_train)
 
@@ -170,7 +177,7 @@ def main():
     pool = Pool(options.workers)
     logger.log_info(module_name, "Generating training inputs")
     if options.tdir:
-        p_args = zip(ifiles, [options.max_val] * len(ifiles))
+        p_args = zip(ifiles, [options] * len(ifiles))
         train  = [res for res in pool.map(process_eval, p_args) if res[1]]
         ifiles = [res[0] for res in train]  # Removing files that couldn't be sliced
         train  = [res[1] for res in train]  # train is now only the one-hots
@@ -182,7 +189,7 @@ def main():
         logger.log_stop()
         sys.exit(ERROR_RUNTIME)
     logger.log_info(module_name, "Generating query inputs")
-    p_args = zip(qfiles, [options.max_val] * len(qfiles))
+    p_args = zip(qfiles, [options] * len(qfiles))
     query  = [res for res in pool.map(process_eval, p_args) if res[1]]
     qfiles = [res[0] for res in query]  # Removing files that couldn't be sliced
     query  = [res[1] for res in query]  # query is now only the one-hots
