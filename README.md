@@ -32,6 +32,11 @@ documentation for more details. Then install the requirements:
 
     pip install -r requirements.txt
 
+Note that while the core code is compatible with Python 2 and 3, the tool
+`bloom.py` relies on `pybloom`, which is only available in Python 2. Similarly,
+newer versions of `matplotlib` only support the latest Python 3 version. In short,
+you may have to tweak `requirements.txt` to get everything to install correctly.
+
 This code also requires a modified version of the program `ptxed`, which can
 be found in the `ptxed` directory of this repo. First, you'll need `libxed-dev`.
 You can download it from your package manager or compile it from
@@ -44,7 +49,7 @@ the [repo](https://github.com/intelxed/xed). After that, build `ptxed`:
     make
     # Add ptxed/build/bin to your PATH
 
-Finally, a Redis database is needed to use `knn.py`. If you are not interested in
+Finally, a Redis database is needed to use `cluster.py`. If you are not interested in
 clustering, this step can be skipped.  Most GNU/Linux distributions already
 have a package. For example, on Debian:
 
@@ -52,7 +57,7 @@ have a package. For example, on Debian:
 
 # Usage
 
-See `./lstm.py --help`, `./classifier.py --help`, and `./knn.py --help` for options
+See `./lstm.py --help`, `./classifier.py --help`, and `./cluster.py --help` for options
 and usage.
 
 `lstm.py` is the first layer of the model. It has three phases: training, testing,
@@ -65,8 +70,8 @@ traces.
 for detecting anomalies. It reports the final results in terms of error rates and
 produces a graph for visualization.
 
-`knn.py` also takes the output from the previously mentioned evaluation phase and
-clusters anomalies using KNN with cosine distance. Note that the evaluation files you
+`cluster.py` also takes the output from the previously mentioned evaluation phase and
+clusters anomalies using nearest neighbor with cosine distance. Note that the evaluation files you
 want to query will need to be in a seperate directory from the files used for training. 
 
 # Useful features
@@ -86,6 +91,13 @@ configure this system to periodically save the current weights for the model
 every couple of minutes like so:
 
     ./lstm.py --save-model=model.json --save-weights=weights.h5 --checkpoint=5 [... other args ...]
+
+Additionally, the `--checkpoint-best` option can be used to avoid backing up
+weights with more loss than the previous backup and `--checkpoint-early-stop`
+will stop training if the loss at the current checkpoint is worse than the
+previous. The latter is very useful when you have so much data that the model
+converges before completing an epoch. This is surprisingly easy to encounter
+with this system.
 
 ## Skipping training, testing, or evaluation
 
@@ -140,6 +152,27 @@ Although preprocessed traces are larger than raw ones, the lack of dependence
 on external software makes them better suited for shared cluster computing or
 for situations where preprocessing is the bottleneck for performance.
 
+## Multi-GPU Mode
+
+Multiple GPUs can be used by setting the `--multi-gpu` option to the desired
+number. At the time of writing, Keras does not recommend going above 8. By
+default, Keras picks the first "n" GPUs on the system. For finer control
+over GPU choice, use the `CUDA_​VISIBLE_​DEVICES` environment variable.
+
+When multi-GPU mode is combined with the save model and weights options, two
+additional files will be written ending in `.single`. These files can
+be used outside of multi-GPU mode whereas the normal output files are only
+compatible with the provided value to `--multi-gpu`.
+
+For example, if you train and save a model and weights using `--multi-gpu=4`,
+you will get two sets of files. The model and weights ending in `.single`
+will work in future sessions where `--multi-gpu` is not set. The other set
+of files *only* work when `--multi-gpu=4`.
+
+Switching between multi-GPU settings (e.g. training with 2 and evaluating
+with 4) is not currently supported. Using multiple GPUs outside of training
+does not seem to boost performance significantly.
+
 # Development
 
 The following is a basic outline of how the code is organized to help
@@ -177,9 +210,12 @@ unique sequences over all the benign traces. In other words, it counts the numbe
 of unique sequences in the first trace, then the number of unique sequences in
 the second trace that are not in the first trace, then the number of unique
 sequences in the third trace that is in neither the first or second traces, and
-so forth.
+so forth. This is useful for approximating your "learning curve" to find the
+point where adding more traces yields little added value.
 
-* `prob.py`: A simple probabilistic model for comparing the first layer against.
+There are also two alternative learners used in the paper for comparison. Both
+take the place of the first layer in this system:
 
-* `syscall.py`: An API based model for comparision that can be used in place of
-the first layer. Uses API calls taken from Cuckoo reports.
+* `prob.py`: A simple "rote learner".
+
+* `syscall.py`: An API-based model that uses Cuckoo reports.
