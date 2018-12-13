@@ -294,7 +294,7 @@ def eval_model(eval_set):
         o_filename = sample['label'] + '-' + path.basename(sample['base_dir']) + '.gz'
         o_filepath = path.join(eval_dir, o_filename)
         logger.log_debug(module_name, 'Writing to ' + o_filepath)
-        with gzip.open(o_filepath, 'w') as ofile:
+        with gzip.open(o_filepath, 'wt') as ofile:
             if options.preprocess:
                 gen_func = reader.read_preprocessed
             else:

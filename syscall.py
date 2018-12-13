@@ -125,7 +125,7 @@ def parse_report(filepath):
         return res
 
     try:
-        with gzip.open(filepath, 'r') as ifile:
+        with gzip.open(filepath, 'rt') as ifile:
             report = json.loads(ifile.read())
     except IOError:
         logger.log_error(MODULE_NAME, 'Failed to read ' + str(filepath))
@@ -277,7 +277,7 @@ def eval_model(samples):
         o_filepath = path.join(temp_dir, o_filename)
         logger.log_debug(MODULE_NAME, 'Writing to ' + o_filepath)
 
-        with gzip.open(o_filepath, 'w') as ofile:
+        with gzip.open(o_filepath, 'wt') as ofile:
             for x_batch, y_batch in trace:
                 ps = model.predict_on_batch(np.array(x_batch)).tolist()
                 cs = [max(p) for p in ps]                        # Max confidence
