@@ -34,7 +34,7 @@ import tempfile
 import gzip
 
 module_name = 'LSTM'
-module_version = '1.1.2'
+module_version = '1.1.3'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -92,34 +92,36 @@ def load_sets():
 
 def build_model():
     """ Builds the LSTM model assuming two categories."""
-    model = Sequential()
+    template = Sequential()
 
-    model.add(Embedding(input_dim=options.embedding_in_dim,
+    template.add(Embedding(input_dim=options.embedding_in_dim,
                         output_dim=options.embedding_out_dim,
                         input_length=options.seq_len))
 
-    model.add(LSTM(options.units, return_sequences=True))
-    model.add(Activation('relu'))
+    template.add(LSTM(options.units, return_sequences=True))
+    template.add(Activation('relu'))
 
-    model.add(LSTM(options.units, return_sequences=True))
-    model.add(Activation('relu'))
+    template.add(LSTM(options.units, return_sequences=True))
+    template.add(Activation('relu'))
 
-    model.add(LSTM(options.units))
+    template.add(LSTM(options.units))
 
-    model.add(Dense(128))
-    model.add(Activation('relu'))
+    template.add(Dense(128))
+    template.add(Activation('relu'))
 
-    model.add(Dropout(options.dropout))
+    template.add(Dropout(options.dropout))
 
-    model.add(Dense(options.max_classes))
-    model.add(Activation('softmax'))
+    template.add(Dense(options.max_classes))
+    template.add(Activation('softmax'))
 
     if not options.multi_gpu is None:
-        model = multi_gpu_model(model, gpus=options.multi_gpu)
+        model = multi_gpu_model(template, gpus=options.multi_gpu)
         # Keras splits batches evenly between GPUs. For example, if batch size is 64 and you're using
         # 2 GPUs, each GPU will receive 32 samples per batch. When the user sets batch size, they
         # probably expect it to be per-GPU, so we adjust accordingly.
         options.batch_size *= options.multi_gpu
+    else:
+        model = template
 
     opt = optimizers.RMSprop(lr=options.learning_rate, decay=options.learning_decay)
     model.compile(loss='sparse_categorical_crossentropy',
@@ -129,7 +131,7 @@ def build_model():
     logger.log_info(module_name, 'Model Summary:')
     model.summary(print_fn=(lambda x: logger.log_info(module_name, x)))
 
-    return model
+    return (model, template)
 
 def map_to_model(samples, f):
     """ A helper function because train_on_batch() and test_on_batch() are so similar."""
@@ -220,6 +222,8 @@ def train_model(training_set):
             if not options.checkpoint_best or c_metrics[0] < last_b:
                 try:
                     model.save_weights(options.save_weights)
+                    if not options.multi_gpu is None:
+                        template.save_weights(options.save_weights + '.single')
                 except:
                     generator.stop_generator(10)
                     clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
@@ -587,9 +591,19 @@ if __name__ == '__main__':
     if len(options.use_model) == 0:
         logger.log_info(module_name, 'Building LSTM model')
         try:
-            model = build_model()
+            model, template = build_model()
         except:
             clean_exit(EXIT_RUNTIME_ERROR, "Error while building model:\n" + str(traceback.format_exc()))
+        if len(options.save_model) > 0:
+            try:
+                logger.log_info(module_name, 'Saving LSTM model')
+                with open(options.save_model, 'w') as ofile:
+                    ofile.write(model.to_json())
+                if not options.multi_gpu is None:
+                    with open(options.save_model + '.single', 'w') as ofile:
+                        ofile.write(template.to_json())
+            except:
+                clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM model:\n" + str(traceback.format_exc()))
     else:
         logger.log_info(module_name, 'Restoring LSTM model from provided filepath')
         try:
@@ -600,14 +614,6 @@ if __name__ == '__main__':
                           metrics=['sparse_categorical_accuracy'])
         except:
             clean_exit(EXIT_RUNTIME_ERROR, 'Failed to load model from JSON file')
-
-    if len(options.save_model) > 0:
-        try:
-            logger.log_info(module_name, 'Saving LSTM model')
-            with open(options.save_model, 'w') as ofile:
-                ofile.write(model.to_json())
-        except:
-            clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM model:\n" + str(traceback.format_exc()))
 
     # Train model if user didn't already provide weights
     if len(options.use_weights) == 0:
@@ -621,18 +627,19 @@ if __name__ == '__main__':
                 clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
             if curr_loss is None:  # Training early stopped mid-epoch
                 break
+        if len(options.save_weights) > 0:
+            try:
+                model.save_weights(options.save_weights)
+                if not options.multi_gpu is None:
+                    template.save_weights(options.save_weights + '.single')
+            except:
+                clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
     else:
         logger.log_info(module_name, 'Restoring LSTM weights from provided filepath')
         try:
             model.load_weights(options.use_weights)
         except:
             clean_exit(EXIT_RUNTIME_ERROR, 'Failed to load weights from file')
-
-    if len(options.save_weights) > 0:
-        try:
-            model.save_weights(options.save_weights)
-        except:
-            clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
 
     # Test model
     if not options.skip_test:
