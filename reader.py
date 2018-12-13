@@ -331,7 +331,7 @@ def read_preprocessed(filepath):
         while True:
             # Get packet length
             head = ifile.read(2)
-            if head == '':
+            if len(head) != 2:
                 break  # EoF
             packet_len = unpack("H", head)[0]
             # Get packet contents
