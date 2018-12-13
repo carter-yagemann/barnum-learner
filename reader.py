@@ -17,6 +17,8 @@
 # You should have received a copy of the GNU General Public License
 # along with Barnum.  If not, see <https://www.gnu.org/licenses/>.
 
+from __future__ import print_function
+
 import logger
 import logging
 import utils
@@ -113,7 +115,7 @@ def read_memory_file(filepath):
 
     # Decompress file if necessary
     if filepath[-3:] == '.gz':
-        ifile = gzip.open(filepath, 'r')
+        ifile = gzip.open(filepath, 'rt')
     else:
         ifile = open(filepath, 'r')
 
@@ -162,7 +164,7 @@ def get_bbid(addr):
     if map is None:
         return None # Failed to find memory region this address belongs to
     offset = addr - map[0]
-    return (abs(adler32(map[2])) << 32) + offset
+    return (abs(adler32(map[2].encode('utf-8'))) << 32) + offset
 
 def warn_and_debug(has_warned, warning, debug):
     """ Prints a debug message and also generates a generic warning message if one hasn't
@@ -268,6 +270,7 @@ def disasm_pt_file(trace_path, bin_path, mem_mapping, timeout=None):
         watchdog.start()
 
     for line in ptxed.stdout:
+        line = line.decode()
         if re_block.match(line):
             try:
                 head, start, end,  instr = line.split(' ', 3)
@@ -328,7 +331,7 @@ def read_preprocessed(filepath):
         while True:
             # Get packet length
             head = ifile.read(2)
-            if head == '':
+            if len(head) != 2:
                 break  # EoF
             packet_len = unpack("H", head)[0]
             # Get packet contents
@@ -346,7 +349,7 @@ def test_reader():
     import traceback
 
     if len(argv) < 4:
-        print argv[0], '<input_file>', '<memory_file>', '<bin_dir>'
+        print(argv[0], '<input_file>', '<memory_file>', '<bin_dir>')
         exit(0)
 
     logger.log_start(logging.DEBUG)

@@ -52,8 +52,8 @@ def slice(array, window=10000, threshold=0.1):
 def process_eval(args):
     ifile, max_bbid = args
     # For each prediction, 1 if correct, 0 if wrong
-    res = [int(line.split(',', 1)[0]) for line in gzip.open(ifile).readlines()]
-    bbs = [int(line[::-1].split(',', 1)[0][::-1]) for line in gzip.open(ifile).readlines()]
+    res = [int(line.split(',', 1)[0]) for line in gzip.open(ifile, 'rt').readlines()]
+    bbs = [int(line[::-1].split(',', 1)[0][::-1]) for line in gzip.open(ifile, 'rt').readlines()]
     start, end = slice(res)
     if len(res[start:end]) == len(res):
         return (ifile, None)  # Could not take slice at given threshold

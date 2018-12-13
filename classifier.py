@@ -40,7 +40,7 @@ def parse_file(ifilepath):
     else:
         return (3, 0, 0, name)
 
-    with gzip.open(ifilepath, 'r') as ifile:
+    with gzip.open(ifilepath, 'rt') as ifile:
         try:
             parts = [line.strip().split(',') for line in ifile.readlines()]
             accuracy = [int(part[0]) for part in parts]
