@@ -29,6 +29,10 @@ matplotlib.use('Agg')  # Hack so X isn't required
 import matplotlib.pyplot as plt
 from sklearn.externals import joblib
 
+# Error Codes
+ERROR_INVALID_ARG = 1
+ERROR_RUNTIME     = 2
+
 def parse_file(ifilepath):
     """Parse a single evaluation file"""
     name = os.path.basename(ifilepath)
@@ -66,6 +70,8 @@ def main():
                       help='Force threshold to produce no false positives (benign classified as malicious)')
     parser.add_option('-s', '--save', action='store', type='str', default=None,
                       help='Save classifier to given filepath (default: no saving)')
+    parser.add_option('-l', '--load', action='store', type='str', default=None,
+                      help='Use a previously saved classifier instead of making a new one')
     parser.add_option('-c', '--csv', action='store', type='str', default=None,
                       help='Save CSV of results to given filepath (default: no CSV)')
     parser.add_option('-p', '--plot', action='store', type='str', default=None,
@@ -77,13 +83,13 @@ def main():
 
     if len(args) != 1 or options.workers < 1:
         parser.print_help()
-        sys.exit(1)
+        sys.exit(ERROR_INVALID_ARG)
 
     idirpath = args[0]
 
     if not os.path.isdir(idirpath):
         sys.stderr.write('ERROR: ' + idirpath + " is not a directory\n")
-        sys.exit(1)
+        sys.exit(ERROR_INVALID_ARG)
 
     files = [os.path.join(idirpath, f) for f in os.listdir(idirpath) if os.path.isfile(os.path.join(idirpath, f))]
 
@@ -93,24 +99,34 @@ def main():
     ys = np.array([sample[0] for sample in data])
     xs = np.array([sample[1:3] for sample in data])
 
-    if options.force:
-        # SVM (we're going to force it to have 0 FP)
-        fp = 1.0
-        weight = 10.0
+    if options.load is None:
+        # Train a new classifier from scratch
+        if options.force:
+            # SVM (we're going to force it to have 0 FP)
+            fp = 1.0
+            weight = 10.0
 
-        while fp > 0.0 and weight > 0.0000001:
+            while fp > 0.0 and weight > 0.0000001:
 
-            svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
+                svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
+                svm.fit(xs, ys)
+                weight *= 0.999
+
+                results = [[sample, svm.predict([sample[1:3]])] for sample in data]
+                benign = [sample for sample in results if sample[0][0] == 0]
+                fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
+                fp = float(len(fps)) / float(len(benign))
+        else:
+            svm = SVC(kernel='linear')
             svm.fit(xs, ys)
-            weight *= 0.999
-
-            results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-            benign = [sample for sample in results if sample[0][0] == 0]
-            fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-            fp = float(len(fps)) / float(len(benign))
     else:
-        svm = SVC(kernel='linear')
-        svm.fit(xs, ys)
+        # Use a previously saved classifier
+        sys.stdout.write("Loading classifier from " + options.load + "\n")
+        try:
+            svm = joblib.load(options.load)
+        except Exception as ex:
+            sys.stderr.write("Failed to load classifier: " + str(ex) + "\n")
+            sys.exit(ERROR_RUNTIME)
 
     # Metrics
     results = [[sample, svm.predict([sample[1:3]])] for sample in data]
@@ -122,12 +138,14 @@ def main():
     fp = float(len(fps)) / float(len(benign))
     fn = float(len(fns)) / float(len(malicious))
 
+    sys.stdout.write("\n----------\n")
     sys.stdout.write("FP: " + str(fp) + "\n")
     sys.stdout.write("FN: " + str(fn) + "\n")
 
     sys.stdout.write("\nFalse Negatives:\n\n")
     for sample in fns:
         sys.stdout.write(str(sample[0][3]) + "\n")
+    sys.stdout.write("----------\n\n")
 
     # Saving CSV
     if not options.csv is None:
