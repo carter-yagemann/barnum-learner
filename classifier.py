@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 from sklearn.externals import joblib
 
 module_name = 'Classifier'
-module_version = '1.0.1'
+module_version = '1.0.2'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -101,6 +101,13 @@ def main():
         sys.exit(ERROR_INVALID_ARG)
 
     files = [os.path.join(idirpath, f) for f in os.listdir(idirpath) if os.path.isfile(os.path.join(idirpath, f))]
+    num_benign = len([fp for fp in files if 'benign' in os.path.basename(fp)])
+    num_malicious = len([fp for fp in files if 'malicious' in os.path.basename(fp)])
+
+    if options.load is None and (num_benign == 0 or num_malicious == 0):
+        logger.log_error(module_name, "Need at least 1 malicious and 1 benign sample to train a classifier")
+        logger.log_stop()
+        sys.exit(ERROR_INVALID_ARG)
 
     # Calculate average accuracy and confidence for each sample
     pool = Pool(options.workers)
@@ -145,8 +152,14 @@ def main():
     fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
     fns = [sample for sample in results if sample[0][0] == 1 and sample[1] == 0]
 
-    fp = float(len(fps)) / float(len(benign))
-    fn = float(len(fns)) / float(len(malicious))
+    if len(benign) > 0:
+        fp = float(len(fps)) / float(len(benign))
+    else:
+        fp = 0.0
+    if len(malicious) > 0:
+        fn = float(len(fns)) / float(len(malicious))
+    else:
+        fn = 0.0
 
     logger.log_info(module_name, "----------")
     logger.log_info(module_name, "FP: " + str(fp))
