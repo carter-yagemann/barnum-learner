@@ -617,6 +617,7 @@ if __name__ == '__main__':
 
     # Train model if user didn't already provide weights
     if len(options.use_weights) == 0:
+        prev_loss = 10000
         for epoch in range(options.epochs):
             logger.log_info(module_name, 'Starting training epoch ' + str(epoch + 1))
             try:
@@ -627,6 +628,11 @@ if __name__ == '__main__':
                 clean_exit(EXIT_RUNTIME_ERROR, "Unexpected error:\n" + str(traceback.format_exc()), True)
             if curr_loss is None:  # Training early stopped mid-epoch
                 break
+            if curr_loss > prev_loss:
+                logger.log_info(module_name, "Loss metric didn't improve, stopping early")
+                break
+            else:
+                prev_loss = curr_loss
         if len(options.save_weights) > 0:
             try:
                 model.save_weights(options.save_weights)
