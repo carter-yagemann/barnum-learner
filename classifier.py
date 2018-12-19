@@ -32,11 +32,60 @@ import matplotlib.pyplot as plt
 from sklearn.externals import joblib
 
 module_name = 'Classifier'
-module_version = '1.0.2'
+module_version = '1.1.0'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
 ERROR_RUNTIME     = 2
+
+def make_roc(filepath, data):
+    ys = np.array([sample[0] for sample in data])
+    xs = np.array([sample[1:3] for sample in data])
+
+    # Find (roughly) where FP is 0%
+    fp = 1.0
+    weight = 10.0
+    while fp > 0.0:
+        svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
+        svm.fit(xs, ys)
+        weight *= 0.99
+
+        results = [[sample, svm.predict([sample[1:3]])] for sample in data]
+        benign = [sample for sample in results if sample[0][0] == 0]
+        fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
+        fp = float(len(fps)) / float(len(benign))
+
+    # Step backwards until FP rises above 0%
+    while fp <= 0.0:
+        prev_w = weight
+        weight *= 1.01
+        svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
+        svm.fit(xs, ys)
+
+        results = [[sample, svm.predict([sample[1:3]])] for sample in data]
+        benign = [sample for sample in results if sample[0][0] == 0]
+        fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
+        fp = float(len(fps)) / float(len(benign))
+    weight = prev_w
+    fp = 0.0
+
+    # Plot ROC curve
+    with open(filepath, 'w') as ofile:
+        ofile.write("fp,tp\n")  # CSV header
+        while fp < 1.0:
+            svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
+            svm.fit(xs, ys)
+            weight *= 1.005
+
+            results = [[sample, svm.predict([sample[1:3]])] for sample in data]
+            benign = [sample for sample in results if sample[0][0] == 0]
+            malicious = [sample for sample in results if sample[0][0] == 1]
+            fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
+            fp = float(len(fps)) / float(len(benign))
+            tps = [sample for sample in results if sample[0][0] == 1 and sample[1] == 1]
+            tp = float(len(tps)) / float(len(malicious))
+
+            ofile.write(','.join([str(fp), str(tp)]) + "\n")
 
 def parse_file(ifilepath):
     """Parse a single evaluation file"""
@@ -81,6 +130,8 @@ def main():
                       help='Save CSV of results to given filepath (default: no CSV)')
     parser.add_option('-p', '--plot', action='store', type='str', default=None,
                       help='Save plot as a PNG image to the given filepath (default: no plotting)')
+    parser.add_option('-r', '--roc', action='store', type='str', default=None,
+                      help='Save CSV plotting ROC curve to filepath (default: not saved)')
     parser.add_option('-w', '--workers', action='store', dest='workers', type='int', default=cpu_count(),
                       help='Number of workers to use (default: number of cores)')
 
@@ -109,13 +160,20 @@ def main():
         logger.log_stop()
         sys.exit(ERROR_INVALID_ARG)
 
+    if not options.roc is None and (num_benign == 0 or num_malicious == 0):
+        logger.log_error(module_name, "Need at least 1 malicious and 1 benign sample to plot a ROC curve")
+        logger.log_stop()
+        sys.exit(ERROR_INVALID_ARG)
+
     # Calculate average accuracy and confidence for each sample
+    logger.log_info(module_name, "Parsing " + idirpath)
     pool = Pool(options.workers)
     data = [sample for sample in pool.map(parse_file, files) if sample[0] < 2]
     ys = np.array([sample[0] for sample in data])
     xs = np.array([sample[1:3] for sample in data])
 
     if options.load is None:
+        logger.log_info(module_name, "Creating classifier")
         # Train a new classifier from scratch
         if options.force:
             # SVM (we're going to force it to have 0 FP)
@@ -164,10 +222,6 @@ def main():
     logger.log_info(module_name, "----------")
     logger.log_info(module_name, "FP: " + str(fp))
     logger.log_info(module_name, "FN: " + str(fn))
-
-    logger.log_info(module_name, "False Negatives:")
-    for sample in fns:
-        logger.log_info(module_name, '    ' + str(sample[0][3]))
     logger.log_info(module_name, "----------")
 
     # Saving CSV
@@ -175,15 +229,15 @@ def main():
         logger.log_info(module_name, "Saving CSV to " + options.csv)
         try:
             with open(options.csv, 'w') as csv_file:
-                csv_file.write("true_label,pred_label,name\n")
+                csv_file.write("true_label,pred_label,avg_accuracy,avg_confidence,name\n")
                 for result in results:
-                    csv_file.write(','.join([str(result[0][0]), str(result[1][0]), result[0][3]]) + "\n")
+                    csv_file.write(','.join([str(result[0][0]), str(result[1][0]), str(result[0][1]), str(result[0][2]), result[0][3]]) + "\n")
         except Exception as ex:
             module.log_error(module_name, "Failed to save CSV: " + str(ex))
 
     # Saving Classifier
     if not options.save is None:
-        logger.log_info(module_name, "Saving classifier")
+        logger.log_info(module_name, "Saving classifier to " + options.save)
         try:
             joblib.dump(svm, options.save)
         except:
@@ -191,6 +245,7 @@ def main():
 
     # Plotting
     if not options.plot is None:
+        logger.log_info(module_name, "Saving plot to " + options.plot)
         axes = plt.gca()
         axes.set_xlim([0, 1])
         axes.set_ylim([0, 1])
@@ -207,6 +262,11 @@ def main():
             plt.savefig(options.plot)
         except:
             logger.log_error(module_name, "Failed to save plot")
+
+    # ROC
+    if not options.roc is None:
+        logger.log_info(module_name, "Saving ROC to " + options.roc)
+        make_roc(options.roc, data)
 
     logger.log_stop()
 
