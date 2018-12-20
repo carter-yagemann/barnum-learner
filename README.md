@@ -224,3 +224,7 @@ take the place of the first layer in this system:
 * `prob.py`: A simple "rote learner".
 
 * `syscall.py`: An API-based model that uses Cuckoo reports.
+
+# Improving Results
+
+Consult `GUIDE.md` for tips and tricks on how to get the best possible results.
