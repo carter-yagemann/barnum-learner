@@ -127,7 +127,7 @@ def parse_report(filepath):
     try:
         with gzip.open(filepath, 'rt') as ifile:
             report = json.loads(ifile.read())
-    except IOError:
+    except (IOError, EOFError):
         logger.log_error(MODULE_NAME, 'Failed to read ' + str(filepath))
         return res
 

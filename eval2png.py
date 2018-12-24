@@ -38,7 +38,7 @@ def parse_eval(ifilepath, width):
         try:
             parts = [line.strip().split(',') for line in ifile.readlines()]
             accuracy = [int(part[0]) for part in parts]
-        except IOError:
+        except (IOError, EOFError):
             logger.log_error(module_name, 'Failed to parse ' + ifilepath)
             return
 
