@@ -103,7 +103,7 @@ def parse_file(ifilepath):
             parts = [line.strip().split(',') for line in ifile.readlines()]
             accuracy = [int(part[0]) for part in parts]
             confidence = [float(part[2]) for part in parts if part[0] == '0']
-        except IOError:
+        except (IOError, EOFError):
             logger.log_error(module_name, 'WARNING: Failed to parse ' + ifilepath)
             return (3, 0, 0, name)
 
