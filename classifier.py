@@ -25,66 +25,41 @@ from optparse import OptionParser
 import gzip
 from multiprocessing import Pool, cpu_count
 import numpy as np
-from sklearn.svm import SVC
+from sklearn.svm import OneClassSVM
 import matplotlib
 matplotlib.use('Agg')  # Hack so X isn't required
 import matplotlib.pyplot as plt
 from sklearn.externals import joblib
 
 module_name = 'Classifier'
-module_version = '1.1.0'
+module_version = '2.0.0'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
 ERROR_RUNTIME     = 2
 
-def make_roc(filepath, data):
-    ys = np.array([sample[0] for sample in data])
-    xs = np.array([sample[1:3] for sample in data])
-
-    # Find (roughly) where FP is 0%
-    fp = 1.0
-    weight = 10.0
-    while fp > 0.0:
-        svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
-        svm.fit(xs, ys)
-        weight *= 0.99
+def make_roc(filepath, data, gamma):
+    res = dict()
+    for nu in np.linspace(0.01, 0.5, 100):
+        svm = OneClassSVM(gamma=gamma, nu=nu)
+        svm.fit([sample[1:3] for sample in data if sample[0] == 1])
 
         results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-        benign = [sample for sample in results if sample[0][0] == 0]
-        fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
+        benign = [sample for sample in results if sample[0][0] == 1]
+        malicious = [sample for sample in results if sample[0][0] == -1]
+        fps = [sample for sample in results if sample[0][0] == 1 and sample[1] == -1]
         fp = float(len(fps)) / float(len(benign))
+        tps = [sample for sample in results if sample[0][0] == -1 and sample[1] == -1]
+        tp = float(len(tps)) / float(len(malicious))
 
-    # Step backwards until FP rises above 0%
-    while fp <= 0.0:
-        prev_w = weight
-        weight *= 1.01
-        svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
-        svm.fit(xs, ys)
+        if not fp in res or tp > res[fp]:
+            res[fp] = tp
 
-        results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-        benign = [sample for sample in results if sample[0][0] == 0]
-        fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-        fp = float(len(fps)) / float(len(benign))
-    weight = prev_w
-    fp = 0.0
+    res = [(key, res[key]) for key in res]
 
-    # Plot ROC curve
     with open(filepath, 'w') as ofile:
         ofile.write("fp,tp\n")  # CSV header
-        while fp < 1.0:
-            svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
-            svm.fit(xs, ys)
-            weight *= 1.005
-
-            results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-            benign = [sample for sample in results if sample[0][0] == 0]
-            malicious = [sample for sample in results if sample[0][0] == 1]
-            fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-            fp = float(len(fps)) / float(len(benign))
-            tps = [sample for sample in results if sample[0][0] == 1 and sample[1] == 1]
-            tp = float(len(tps)) / float(len(malicious))
-
+        for (fp, tp) in sorted(res, key=lambda tup: tup[0]):
             ofile.write(','.join([str(fp), str(tp)]) + "\n")
 
 def parse_file(ifilepath):
@@ -92,9 +67,9 @@ def parse_file(ifilepath):
     name = os.path.basename(ifilepath)
 
     if 'malicious' in name:
-        label = 1
+        label = -1
     elif 'benign' in name:
-        label = 0
+        label = 1
     else:
         return (3, 0, 0, name)
 
@@ -120,12 +95,14 @@ def main():
     global threshold
 
     parser = OptionParser(usage='Usage: %prog [options] eval_dir', version='Barnum Classifier ' + module_version)
-    parser.add_option('-f', '--force', action='store_true',
-                      help='Force threshold to produce no false positives (benign classified as malicious)')
     parser.add_option('-s', '--save', action='store', type='str', default=None,
                       help='Save classifier to given filepath (default: no saving)')
     parser.add_option('-l', '--load', action='store', type='str', default=None,
                       help='Use a previously saved classifier instead of making a new one')
+    parser.add_option('-n', '--nu', action='store', type='float', default=None,
+                      help='Use provided nu value instead of searching')
+    parser.add_option('-g', '--gamma', action='store', type='float', default=0.5,
+                      help='Use provided gamma (default: 0.5)')
     parser.add_option('-c', '--csv', action='store', type='str', default=None,
                       help='Save CSV of results to given filepath (default: no CSV)')
     parser.add_option('-p', '--plot', action='store', type='str', default=None,
@@ -165,34 +142,41 @@ def main():
         logger.log_stop()
         sys.exit(ERROR_INVALID_ARG)
 
+    if options.nu and (options.nu <= 0.0 or options.nu > 1.0):
+        logger.log_error(module_name, "Nu must be between (0.0 1.0]")
+        logger.log_stop()
+        sys.exit(ERROR_INVALID_ARG)
+
+    if options.gamma <= 0.0 or options.gamma > 1.0:
+        logger.log_error(module_name, "Gamma must be between (0.0 1.0]")
+        logger.log_stop()
+        sys.exit(ERROR_INVALID_ARG)
+
     # Calculate average accuracy and confidence for each sample
     logger.log_info(module_name, "Parsing " + idirpath)
     pool = Pool(options.workers)
     data = [sample for sample in pool.map(parse_file, files) if sample[0] < 2]
-    ys = np.array([sample[0] for sample in data])
-    xs = np.array([sample[1:3] for sample in data])
 
     if options.load is None:
         logger.log_info(module_name, "Creating classifier")
-        # Train a new classifier from scratch
-        if options.force:
-            # SVM (we're going to force it to have 0 FP)
-            fp = 1.0
-            weight = 10.0
-
-            while fp > 0.0 and weight > 0.0000001:
-
-                svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
-                svm.fit(xs, ys)
-                weight *= 0.999
-
-                results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-                benign = [sample for sample in results if sample[0][0] == 0]
-                fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-                fp = float(len(fps)) / float(len(benign))
+        if options.nu:
+            svm = OneClassSVM(gamma=options.gamma, nu=options.nu)
+            svm.fit([sample[1:3] for sample in data if sample[0] == 1])
+            nu = options.nu
         else:
-            svm = SVC(kernel='linear')
-            svm.fit(xs, ys)
+            # Find nu with lowest false positive rate
+            nus = list()
+            for nu in np.linspace(0.01, 0.5, 100):
+                svm = OneClassSVM(gamma=options.gamma, nu=nu)
+                svm.fit([sample[1:3] for sample in data if sample[0] == 1])
+                results = [[sample, svm.predict([sample[1:3]])] for sample in data]
+                benign = [sample for sample in results if sample[0][0] == 1]
+                fps = [sample for sample in results if sample[0][0] == 1 and sample[1] == -1]
+                fp = float(len(fps)) / float(len(benign))
+                nus.append((fp, nu))
+            nu = sorted(nus, key=lambda tup: tup[0])[0][1]
+            svm = OneClassSVM(gamma=options.gamma, nu=nu)
+            svm.fit([sample[1:3] for sample in data if sample[0] == 1])
     else:
         # Use a previously saved classifier
         logger.log_info(module_name, "Loading classifier from " + options.load)
@@ -205,21 +189,22 @@ def main():
 
     # Metrics
     results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-    benign = [sample for sample in results if sample[0][0] == 0]
-    malicious = [sample for sample in results if sample[0][0] == 1]
-    fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-    fns = [sample for sample in results if sample[0][0] == 1 and sample[1] == 0]
+    benign = [sample for sample in results if sample[0][0] == 1]
+    malicious = [sample for sample in results if sample[0][0] == -1]
+    fps = [sample for sample in results if sample[0][0] == 1 and sample[1] == -1]
+    fns = [sample for sample in results if sample[0][0] == -1 and sample[1] == 1]
 
     if len(benign) > 0:
         fp = float(len(fps)) / float(len(benign))
     else:
-        fp = 0.0
+        fp = 'N/A'
     if len(malicious) > 0:
         fn = float(len(fns)) / float(len(malicious))
     else:
-        fn = 0.0
+        fn = 'N/A'
 
     logger.log_info(module_name, "----------")
+    logger.log_info(module_name, "nu: " + str(nu))
     logger.log_info(module_name, "FP: " + str(fp))
     logger.log_info(module_name, "FN: " + str(fn))
     logger.log_info(module_name, "----------")
@@ -249,13 +234,12 @@ def main():
         axes = plt.gca()
         axes.set_xlim([0, 1])
         axes.set_ylim([0, 1])
-        w = svm.coef_[0]
-        a = -w[0] / w[1]
-        xx = np.linspace(0, 1)
-        yy = a * xx - (svm.intercept_[0]) / w[1]
+        xx, yy = np.meshgrid(np.linspace(0, 1, 500), np.linspace(0, 1, 500))
+        Z = svm.predict(np.c_[xx.ravel(), yy.ravel()])
+        Z = Z.reshape(xx.shape)
+        plt.contour(xx, yy, Z, levels=[0], linewidths=2, colors='black')
         plt.scatter([sample[0][1] for sample in benign], [sample[0][2] for sample in benign], marker='o', c='blue')
         plt.scatter([sample[0][1] for sample in malicious], [sample[0][2] for sample in malicious], marker='x', c='red')
-        plt.plot(xx, yy, 'k--')
         plt.xlabel('Wrong Prediction (%)')
         plt.ylabel('Average Confidence (%)')
         try:
@@ -266,7 +250,7 @@ def main():
     # ROC
     if not options.roc is None:
         logger.log_info(module_name, "Saving ROC to " + options.roc)
-        make_roc(options.roc, data)
+        make_roc(options.roc, data, options.gamma)
 
     logger.log_stop()
 
