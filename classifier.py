@@ -182,6 +182,7 @@ def main():
         logger.log_info(module_name, "Loading classifier from " + options.load)
         try:
             svm = joblib.load(options.load)
+            nu = None
         except Exception as ex:
             logger.log_error(module_name, "Failed to load classifier: " + str(ex))
             logger.log_stop()
@@ -204,7 +205,8 @@ def main():
         fn = 'N/A'
 
     logger.log_info(module_name, "----------")
-    logger.log_info(module_name, "nu: " + str(nu))
+    if not nu is None:
+        logger.log_info(module_name, "nu: " + str(nu))
     logger.log_info(module_name, "FP: " + str(fp))
     logger.log_info(module_name, "FN: " + str(fn))
     logger.log_info(module_name, "----------")
