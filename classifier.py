@@ -23,7 +23,9 @@ import logger
 import logging
 from optparse import OptionParser
 import gzip
+import pickle
 from multiprocessing import Pool, cpu_count
+from hashlib import sha256
 import numpy as np
 from sklearn.svm import OneClassSVM
 import matplotlib
@@ -32,11 +34,49 @@ import matplotlib.pyplot as plt
 from sklearn.externals import joblib
 
 module_name = 'Classifier'
-module_version = '2.0.0'
+module_version = '2.1.0'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
 ERROR_RUNTIME     = 2
+
+CACHE_DIR = os.path.expanduser('~/.cache/barnum')
+
+def init_cache():
+    if not os.path.isdir(CACHE_DIR):
+        try:
+            os.makedirs(CACHE_DIR)
+        except Exception as ex:
+            logger.log_warning(module_name, "Failed to create cache directory: " + str(ex))
+
+def add_cache(hash, acc, con):
+    if not os.path.isdir(CACHE_DIR):
+        logger.log_warning(module_name, "Cache directory does not exist, cannot update it")
+        return
+
+    ofp = os.path.join(CACHE_DIR, hash)
+    data = (acc, con)
+    if not os.path.exists(ofp):
+        with open(ofp, 'wb') as ofile:
+            pickle.dump(data, ofile)
+
+def is_cached(hash):
+    ofp = os.path.join(CACHE_DIR, hash)
+    if os.path.isfile(ofp):
+        return True
+    return False
+
+def get_cache(hash):
+    if not is_cached(hash):
+        return None
+
+    ofp = os.path.join(CACHE_DIR, hash)
+    with open(ofp, 'rb') as ifile:
+        try:
+            return pickle.load(ifile)
+        except Exception as ex:
+            logger.log_warning(module_name, "Failed to access cache: " + str(ex))
+            return None
 
 def make_roc(filepath, data, gamma):
     res = dict()
@@ -62,8 +102,9 @@ def make_roc(filepath, data, gamma):
         for (fp, tp) in sorted(res, key=lambda tup: tup[0]):
             ofile.write(','.join([str(fp), str(tp)]) + "\n")
 
-def parse_file(ifilepath):
+def parse_file(args):
     """Parse a single evaluation file"""
+    ifilepath, options = args
     name = os.path.basename(ifilepath)
 
     if 'malicious' in name:
@@ -72,6 +113,14 @@ def parse_file(ifilepath):
         label = 1
     else:
         return (3, 0, 0, name)
+
+    # Check cache
+    if not options.ignore_cache:
+        with open(ifilepath, 'rb') as ifile:
+            hash = sha256(ifile.read()).hexdigest()
+        cache = get_cache(hash)
+        if not cache is None:
+            return (label, cache[0], cache[1], name)
 
     with gzip.open(ifilepath, 'rt') as ifile:
         try:
@@ -87,6 +136,10 @@ def parse_file(ifilepath):
 
     avg_accuracy = 1.0 - float(sum(accuracy)) / float(len(accuracy))
     avg_confidence = float(sum(confidence)) / float(len(confidence))
+
+    # Update cache
+    if not options.ignore_cache:
+        add_cache(hash, avg_accuracy, avg_confidence)
 
     return (label, avg_accuracy, avg_confidence, name)
 
@@ -111,6 +164,8 @@ def main():
                       help='Save CSV plotting ROC curve to filepath (default: not saved)')
     parser.add_option('-w', '--workers', action='store', dest='workers', type='int', default=cpu_count(),
                       help='Number of workers to use (default: number of cores)')
+    parser.add_option('-i', '--ignore-cache', action='store_true',
+                      help='Do not use caching')
 
     options, args = parser.parse_args()
 
@@ -152,10 +207,14 @@ def main():
         logger.log_stop()
         sys.exit(ERROR_INVALID_ARG)
 
+    if not options.ignore_cache:
+        init_cache()
+
     # Calculate average accuracy and confidence for each sample
     logger.log_info(module_name, "Parsing " + idirpath)
     pool = Pool(options.workers)
-    data = [sample for sample in pool.map(parse_file, files) if sample[0] < 2]
+    data = [sample for sample in pool.map(parse_file, zip(files, [options] * len(files))) if sample[0] < 2]
+    pool.close()
 
     if options.load is None:
         logger.log_info(module_name, "Creating classifier")
