@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 from sklearn.externals import joblib
 
 module_name = 'Classifier'
-module_version = '1.2.0'
+module_version = '1.2.1'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -313,8 +313,8 @@ def main():
         a = -w[0] / w[1]
         xx = np.linspace(0, 1)
         yy = a * xx - (svm.intercept_[0]) / w[1]
-        plt.scatter([sample[0][1] for sample in benign], [sample[0][2] for sample in benign], marker='o', c='blue')
-        plt.scatter([sample[0][1] for sample in malicious], [sample[0][2] for sample in malicious], marker='x', c='red')
+        plt.scatter([sample[0][1] for sample in benign], [sample[0][2] for sample in benign], marker='o', c='blue', s=20)
+        plt.scatter([sample[0][1] for sample in malicious], [sample[0][2] for sample in malicious], marker='x', c='red', s=20)
         plt.plot(xx, yy, 'k--')
         plt.xlabel('Wrong Prediction (%)')
         plt.ylabel('Average Confidence (%)')
