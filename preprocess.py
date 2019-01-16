@@ -50,6 +50,8 @@ def main():
                       help='If a complete or partial output already exists, overwrite it.')
     parser.add_option('-t', '--timeout', action='store', type='int', default=None,
                       help='Max seconds to run before quitting (default: infinite).')
+    parser.add_option('-p', '--no-partial', action='store_true',
+                      help='If timeout is reached, do not save the partially parsed trace.')
     options, args = parser.parse_args()
 
     if len(args) < 2:
@@ -63,14 +65,17 @@ def main():
 
     # Input validation
     if not os.path.isdir(data_dir):
-        logger.log_error(module_name, 'ERROR: ' + data_dir + ' is not a directory')
+        logger.log_error(module_name, data_dir + ' is not a directory')
         logger.log_stop()
         sys.exit(1)
 
     if not os.path.isdir(bin_dir):
-        logger.log_error(module_name, 'ERROR: ' + bin_dir + ' is not a directory')
+        logger.log_error(module_name, bin_dir + ' is not a directory')
         logger.log_stop()
         sys.exit(1)
+
+    if options.timeout is None and options.no_partial:
+        logger.log_warning(module_name, "Setting --no-partial without --timeout does nothing")
 
     # Make sure all the expected files are there
     mem_file = None
@@ -84,19 +89,19 @@ def main():
             trace_file = os.path.join(data_dir, file)
 
     if mem_file is None:
-        logger.log_error(module_name, 'ERROR: Could not find mapping.txt or mapping.txt.gz in ' + data_dir)
+        logger.log_error(module_name, 'Could not find mapping.txt or mapping.txt.gz in ' + data_dir)
         logger.log_stop()
         sys.exit(1)
 
     if trace_file is None:
-        logger.log_error(module_name, 'ERROR: Could not find trace_0 or trace_0.gz in ' + data_dir)
+        logger.log_error(module_name, 'Could not find trace_0 or trace_0.gz in ' + data_dir)
         logger.log_stop()
         sys.exit(1)
 
     # Parse the memory file
     mem_map = reader.read_memory_file(mem_file)
     if mem_map is None:
-        logger.log_error(module_name, 'ERROR: Failed to parse memory mapping file')
+        logger.log_error(module_name, 'Failed to parse memory mapping file')
         logger.log_stop()
         sys.exit(1)
 
@@ -104,12 +109,12 @@ def main():
     o_filepath = os.path.join(data_dir, 'trace_parsed.gz')
 
     if os.path.isfile(o_filepath) and not options.force:
-        logger.log_error(module_name, 'ERROR: Preprocess file already exists')
+        logger.log_error(module_name, 'Preprocess file already exists')
         logger.log_stop()
         sys.exit(1)
 
     if os.path.isfile(o_filepath + '.part') and not options.force:
-        logger.log_error(module_name, 'ERROR: Partial preprocess file already exists')
+        logger.log_error(module_name, 'Partial preprocess file already exists')
         logger.log_stop()
         sys.exit(1)
 
@@ -121,10 +126,13 @@ def main():
             ofile.write(pack_instr(instr))
             entries += 1
 
-    if entries > 0:
+    if reader.DISASM_TIMEOUT.is_set() and options.no_partial:
+        logger.log_info(module_name, "Deleting partial trace")
+        os.remove(o_filepath + '.part')
+    elif entries > 0:
         os.rename(o_filepath + '.part', o_filepath)
     else:
-        logger.log_error(module_name, 'ERROR: No output produced, empty file')
+        logger.log_error(module_name, 'No output produced, empty file')
         os.remove(o_filepath + '.part')
 
     logger.log_stop()

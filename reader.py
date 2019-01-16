@@ -32,9 +32,11 @@ from struct import unpack
 import shutil
 import re
 from zlib import adler32
-from threading import Timer
+from threading import Timer, Event
 
 module_name = 'Reader'
+
+DISASM_TIMEOUT = Event()
 
 def parse_pt_dir(root):
     """ Parses a directory containing PT traces and meta data. This parser expects the
@@ -184,6 +186,7 @@ def disasm_timeout(proc):
     """ Termiantes ptxed proc and logs a warning message. """
     logger.log_warning(module_name, "Timeout reached, terminating early")
     proc.kill()
+    DISASM_TIMEOUT.set()
 
 def disasm_pt_file(trace_path, bin_path, mem_mapping, timeout=None):
     """ Disassembles a PT trace into instructions and yields tuples.
@@ -202,7 +205,7 @@ def disasm_pt_file(trace_path, bin_path, mem_mapping, timeout=None):
     trace_path -- The filepath to a raw PT trace (may be gzipped).
     bin_path -- The path to a directory containing binaries for use by the disassembler.
     mem_mapping -- A linear array of tuples in the form (start_address, end_address, source_file).
-    timeout -- If not None, the max number of seconds to disasm for.
+    timeout -- If not None, the max number of seconds to disasm for. Event DISASM_TIMEOUT is set if timeout is reached.
 
     Yields:
     The tuples described above until EoF is reached, after which None is yielded.
@@ -265,6 +268,7 @@ def disasm_pt_file(trace_path, bin_path, mem_mapping, timeout=None):
     last_instr = None
 
     ptxed = subprocess.Popen(command, stdout=subprocess.PIPE, bufsize=1)
+    DISASM_TIMEOUT.clear()
     if not timeout is None:
         watchdog = Timer(timeout, disasm_timeout, args=[ptxed])
         watchdog.start()
