@@ -34,7 +34,7 @@ import tempfile
 import gzip
 
 module_name = 'LSTM'
-module_version = '1.1.4'
+module_version = '1.1.5'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -279,6 +279,9 @@ def test_model(testing_set):
 def eval_model(eval_set):
     """ Evaluate the LSTM model."""
     random.shuffle(eval_set)
+    # There's no point spinning up more worker threads than there are samples
+    threads = min(options.threads, len(eval_set))
+
     if options.eval_dir is None:
         eval_dir = tempfile.mkdtemp(suffix='-lstm-pt')
     else:
@@ -287,47 +290,46 @@ def eval_model(eval_set):
         eval_dir = options.eval_dir
     logger.log_info(module_name, 'Evaluation results will be written to ' + eval_dir)
 
+    if options.preprocess:
+        gen_func = reader.read_preprocessed
+    else:
+        gen_func = reader.disasm_pt_file
+
+    iqueue, oqueue = generator.start_generator(threads, gen_func, options.queue_size, options.seq_len,
+                                               options.embedding_in_dim, options.max_classes, options.batch_size)
+
     for sample in eval_set:
         o_filename = sample['label'] + '-' + path.basename(sample['base_dir']) + '.gz'
         o_filepath = path.join(eval_dir, o_filename)
-        logger.log_debug(module_name, 'Writing to ' + o_filepath)
-        with gzip.open(o_filepath, 'wt') as ofile:
-            if options.preprocess:
-                gen_func = reader.read_preprocessed
+        if options.preprocess:
+            iqueue.put((o_filepath, sample['parsed_filepath']))
+        else:
+            sample_memory = reader.read_memory_file(sample['mapping_filepath'])
+            if sample_memory is None:
+                logger.log_warning(module_name, 'Failed to parse memory file, skipping')
+                continue
+            iqueue.put((o_filepath, sample['trace_filepath'], options.bin_dir, sample_memory, options.timeout))
+
+    while True:
+        try:
+            res = oqueue.get(True, 5)
+        except:
+            in_service = generator.get_in_service()
+            if in_service == 0:
+                break
             else:
-                gen_func = reader.disasm_pt_file
+                logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
+                continue
 
-            iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len,
-                                                       options.embedding_in_dim, options.max_classes, options.batch_size)
+        ps = model.predict_on_batch(np.array(res[1])).tolist()
+        cs = [max(p) for p in ps]                          # Max confidence
+        ms = [p.index(max(p)) for p in ps]                 # Most likely label
+        ts = [int(a == b[0]) for a, b in zip(ms, res[2])]  # Compare prediction to real label
+        with gzip.open(res[0], 'at') as ofile:
+            for c, m, t, y in zip(cs, ms, ts, res[2]):
+                ofile.write(str(t) + ',' + str(m) + ',' + str(c) + ',' + str(y[0]) + "\n")
 
-            if options.preprocess:
-                iqueue.put((None, sample['parsed_filepath']))
-            else:
-                sample_memory = reader.read_memory_file(sample['mapping_filepath'])
-                if sample_memory is None:
-                    logger.log_warning(module_name, 'Failed to parse memory file, skipping')
-                    continue
-                iqueue.put((None, sample['trace_filepath'], options.bin_dir, sample_memory, options.timeout))
-
-            while True:
-                try:
-                    res = oqueue.get(True, 5)
-                except:
-                    in_service = generator.get_in_service()
-                    if in_service == 0:
-                        break
-                    else:
-                        logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
-                        continue
-
-                ps = model.predict_on_batch(np.array(res[1])).tolist()
-                cs = [max(p) for p in ps]                   # Max confidence
-                ms = [p.index(max(p)) for p in ps]          # Most likely label
-                ts = [int(a == b) for a, b in zip(ms, res[2])]  # Compare prediction to real label
-                for c, m, t, y in zip(cs, ms, ts, res[2]):
-                    ofile.write(str(t) + ',' + str(m) + ',' + str(c) + ',' + str(y) + "\n")
-
-            generator.stop_generator(10)
+    generator.stop_generator(10)
 
 if __name__ == '__main__':
 
