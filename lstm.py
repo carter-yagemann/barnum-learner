@@ -34,7 +34,7 @@ import tempfile
 import gzip
 
 module_name = 'LSTM'
-module_version = '1.1.3'
+module_version = '1.1.4'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -145,7 +145,8 @@ def map_to_model(samples, f):
         gen_func = reader.disasm_pt_file
 
     # When you gonna fire it up? When you gonna fire it up?
-    iqueue, oqueue = generator.start_generator(threads, gen_func, options.queue_size, options.seq_len)
+    iqueue, oqueue = generator.start_generator(threads, gen_func, options.queue_size, options.seq_len,
+                                               options.embedding_in_dim, options.max_classes, options.batch_size)
 
     for sample in samples:
         if options.preprocess:
@@ -159,8 +160,6 @@ def map_to_model(samples, f):
 
     # Get parsed sequences and feed them to the LSTM model
     batch_cnt = 0
-    xs = []
-    ys = []
     while True:
         try:
             res = oqueue.get(True, 5)
@@ -172,14 +171,8 @@ def map_to_model(samples, f):
                 logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        xs.append([x % options.embedding_in_dim for x in res[1][1:]])
-        ys.append(res[1][0] % options.max_classes)
-
-        if len(ys) == options.batch_size:
-            yield f(np.array(xs), np.array(ys))
-            xs = []
-            ys = []
-            batch_cnt += 1
+        yield f(np.array(res[1]), np.array(res[2]))
+        batch_cnt += 1
 
     logger.log_info(module_name, "Processed " + str(batch_cnt) + " batches, " + str(batch_cnt * options.batch_size) + " samples")
 
@@ -304,7 +297,8 @@ def eval_model(eval_set):
             else:
                 gen_func = reader.disasm_pt_file
 
-            iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len)
+            iqueue, oqueue = generator.start_generator(1, gen_func, options.queue_size, options.seq_len,
+                                                       options.embedding_in_dim, options.max_classes, options.batch_size)
 
             if options.preprocess:
                 iqueue.put((None, sample['parsed_filepath']))
@@ -315,8 +309,6 @@ def eval_model(eval_set):
                     continue
                 iqueue.put((None, sample['trace_filepath'], options.bin_dir, sample_memory, options.timeout))
 
-            xs = []
-            ys = []
             while True:
                 try:
                     res = oqueue.get(True, 5)
@@ -328,19 +320,12 @@ def eval_model(eval_set):
                         logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                         continue
 
-                xs.append([x % options.embedding_in_dim for x in res[1][1:]])
-                ys.append(res[1][0] % options.max_classes)
-
-                if len(ys) == options.batch_size:
-                    ps = model.predict_on_batch(np.array(xs)).tolist()
-                    cs = [max(p) for p in ps]                   # Max confidence
-                    ms = [p.index(max(p)) for p in ps]          # Most likely label
-                    ts = [int(a == b) for a, b in zip(ms, ys)]  # Compare prediction to real label
-                    for c, m, t, y in zip(cs, ms, ts, ys):
-                        ofile.write(str(t) + ',' + str(m) + ',' + str(c) + ',' + str(y) + "\n")
-
-                    xs = []
-                    ys = []
+                ps = model.predict_on_batch(np.array(res[1])).tolist()
+                cs = [max(p) for p in ps]                   # Max confidence
+                ms = [p.index(max(p)) for p in ps]          # Most likely label
+                ts = [int(a == b) for a, b in zip(ms, res[2])]  # Compare prediction to real label
+                for c, m, t, y in zip(cs, ms, ts, res[2]):
+                    ofile.write(str(t) + ',' + str(m) + ',' + str(c) + ',' + str(y) + "\n")
 
             generator.stop_generator(10)
 
@@ -369,8 +354,8 @@ if __name__ == '__main__':
                                 help='How frequently (in minutes) to print the current status of training or testing (default: 60)')
     parser_group_sys.add_option('-t', '--threads', action='store', dest='threads', type='int', default=cpu_count(),
                                 help='Number of threads to use when parsing PT traces (default: number of CPU cores)')
-    parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32768,
-                                help='Size of the results queue, making this too large may exhaust memory (default: 32768)')
+    parser_group_sys.add_option('--queue-size', action='store', dest='queue_size', type='int', default=32,
+                                help='Size of the results queue, making this too large may exhaust memory (default: 32)')
     parser_group_sys.add_option('--skip-test', action='store_true', dest='skip_test',
                                 help='Skip the generalization testing stage, useful when combined with saving to just make and store a model')
     parser_group_sys.add_option('--skip-eval', action='store_true', dest='skip_eval',

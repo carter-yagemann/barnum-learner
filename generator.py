@@ -42,7 +42,7 @@ in_service = []
 running = Value('b', False)
 fin_tasks = Value('i', 0)
 
-def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
+def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, max_x=128, max_y=128, batch_size=1):
     """ Starts up a generator for dispatching jobs to the target function.
 
     Once started, arrays of arguments (jobs) can be appended to the job queue and the
@@ -65,6 +65,9 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
     seq_len -- Target is assumed to be a generator function, so workers will combine seq_len yielded
     values into an array before placing it on the results queue.
     connection will be established, meaning workers can only use preprocessed traces.
+    max_x -- The max value for features.
+    max_y -- The max value for labels.
+    batch_size -- How many result sequences to batch at a time.
 
     Returns:
     A queue for submitting jobs (job_queue) and a queue for getting results (res_queue).
@@ -78,7 +81,8 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1):
     fin_tasks.value = 0
     for id in range(num_workers):
         in_service.append(Value('b', False))
-        worker_args = (target, job_queue, res_queue, running, in_service[id], int(seq_len))
+        worker_args = (target, job_queue, res_queue, running, in_service[id], seq_len,
+                       max_x, max_y, batch_size)
         worker = Process(target=worker_loop, args=worker_args)
         gen_workers.append(worker)
         worker.start()
@@ -115,7 +119,7 @@ def get_in_service():
 
     return count
 
-def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1):
+def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1, max_x=128, max_y=128, batch_size=1):
     """ Main worker loop, gets data from the target generator and chunks it into sequences.
 
     Sequences are generated in a sliding window fashion. For example, if the data is
@@ -148,6 +152,8 @@ def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1):
         start_time = datetime.now()
 
         try:
+            batch_xs = []
+            batch_ys = []
             seq = []
             for output in target(*(job[1:])):
                 if output is None:        # End of generator
@@ -156,17 +162,18 @@ def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1):
                 curr_size = len(seq)      # Sequence generation
                 if curr_size < (seq_len - 1):
                     seq.append(output[0])
-                elif curr_size == (seq_len - 1):
-                    seq.append(output[0])
-                    # We only want to send sequences that end in an indirect control flow transfer
-                    if True in [func(output) for func in filters.enabled_filters]:
-                        res_queue.put([job[0], deepcopy([output[1]] + seq)])
                 else:
-                    seq.pop(0)
+                    if curr_size > (seq_len - 1):
+                        seq.pop(0)
                     seq.append(output[0])
                     # We only want to send sequences that end in an indirect control flow transfer
                     if True in [func(output) for func in filters.enabled_filters]:
-                        res_queue.put([job[0], deepcopy([output[1]] + seq)])
+                        batch_xs.append(deepcopy([x % max_x for x in seq]))
+                        batch_ys.append(deepcopy([output[1] % max_y]))
+                        if len(batch_ys) == batch_size:
+                            res_queue.put([job[0], deepcopy(batch_xs), deepcopy(batch_ys)])
+                            batch_xs = []
+                            batch_ys = []
         except KeyboardInterrupt:
             pass
         except:
