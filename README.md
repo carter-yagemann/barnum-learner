@@ -118,6 +118,20 @@ If you're using a GPU enabled framework, adjusting the batch size (`-b`) can
 significantly improve performance. There's also the `--multi-gpu` option in
 `lstm.py` if your system has multiple GPUs.
 
+### PyPy
+
+For the adventurous who care more about speed than stability, here's the current
+status and rough setup notes for using PyPy:
+
+    # Tested Version: PyPy 6.0.0 (Python 3.5.4)
+    #  Tested Distro: Debian Stretch
+    #         Status: preprocess.py (300% speedup), classifier.py (11% speedup), lstm.py (incompatible)
+    
+    sudo apt install libhdf5-dev libblas-dev liblapack-dev
+    virtualenv -p pypy/bin/pypy ~/.virtenv/barnum
+    source ~/.virtenv/barnum/bin/activate
+    pip install cython numpy==1.15.4 h5py matplotlib scikit-learn pypng Keras
+
 ## Reusing Previous Sets
 
 By default, the system will randomly pick traces to create the training, test,
