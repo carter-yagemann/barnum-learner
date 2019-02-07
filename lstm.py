@@ -34,7 +34,7 @@ import tempfile
 import gzip
 
 module_name = 'LSTM'
-module_version = '1.1.5'
+module_version = '1.1.6'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -388,18 +388,18 @@ if __name__ == '__main__':
     parser_group_lstm = OptionGroup(parser, 'LSTM Options')
     parser_group_lstm.add_option('-s', '--sequence-len', action='store', dest='seq_len', type='int', default=32,
                                  help='Length of sequences fed into LSTM (default: 32)')
-    parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=1536,
-                                 help='Number of sequences per batch (default: 1536)')
+    parser_group_lstm.add_option('-b', '--batch-size', action='store', dest='batch_size', type='int', default=8192,
+                                 help='Number of sequences per batch (default: 8192)')
     parser_group_lstm.add_option('-e', '--epochs', action='store', dest='epochs', type='int', default=16,
                                  help='Number of times to iterate over test sets (default: 16)')
     parser_group_lstm.add_option('--units', action='store', dest='units', type='int', default=128,
                                  help='Number of units to use in LSTM (default: 128)')
     parser_group_lstm.add_option('--max-classes', action='store', dest='max_classes', type='int', default=1024,
                                  help='The max number of classes to use (default: 1024)')
-    parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=200000,
-                                 help='The input dimension of the embedding layer (default: 200000)')
-    parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=1024,
-                                 help='The output dimension of the embedding layer (default: 1024)')
+    parser_group_lstm.add_option('--embedding-input-dimension', action='store', dest='embedding_in_dim', type='int', default=1024,
+                                 help='The input dimension of the embedding layer (default: 1024)')
+    parser_group_lstm.add_option('--embedding-output-dimension', action='store', dest='embedding_out_dim', type='int', default=128,
+                                 help='The output dimension of the embedding layer (default: 128)')
     parser_group_lstm.add_option('--dropout', action='store', dest='dropout', type='float', default=0.5,
                                  help='The dropout rate in the dense layer (default: 0.5)')
     parser_group_lstm.add_option('--learning-rate', action='store', dest='learning_rate', type='float', default=0.001,
