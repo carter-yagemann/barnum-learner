@@ -27,17 +27,14 @@ using cosine distance.
 
 # Installation
 
+This project is compatible with Python 2 and 3 on most Linux systems (e.g. Debian).
+
 First, install a backend engine for Keras (e.g., Tensorflow). See the Keras
 documentation for more details. Then install the requirements:
 
     pip install -r requirements.txt
 
-Note that while the core code is compatible with Python 2 and 3, the tool
-`bloom.py` relies on `pybloom`, which is only available in Python 2. Similarly,
-newer versions of `matplotlib` only support the latest Python 3 version. In short,
-you may have to tweak `requirements.txt` to get everything to install correctly.
-
-This code also requires a modified version of the program `ptxed`, which can
+This project also requires a modified version of `ptxed`, which can
 be found in the `ptxed` directory of this repo. First, you'll need `libxed-dev`.
 You can download it from your package manager or compile it from
 the [repo](https://github.com/intelxed/xed). After that, build `ptxed`:
@@ -49,10 +46,10 @@ the [repo](https://github.com/intelxed/xed). After that, build `ptxed`:
     make
     # Add ptxed/build/bin to your PATH
 
-Finally, a Redis database is needed to store vectors created by `cluster.py`
-across query sessions. If you are not interested in clustering or do not
-care about persisting training vectors across sessions, this step can be skipped.
-Most GNU/Linux distributions already have a package. For example, on Debian:
+If you only want binary classification, you're ready at this point.
+
+Optionally, if you want to do unsupervised clustering using `cluster.py`,
+you'll need a Redis database:
 
     sudo apt install redis-server
 
