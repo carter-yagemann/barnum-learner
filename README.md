@@ -72,6 +72,42 @@ produces a graph for visualization.
 clusters anomalies using nearest neighbor with cosine distance. Note that the evaluation files you
 want to query will need to be in a seperate directory from the files used for training. 
 
+## Step-by-Step for Beginners
+
+Let's assume you just finished running [Tracer](https://github.com/carter-yagemann/barnum-tracer)
+so `~/barnum-tracer/traces` is full of benign and malicious traces.
+
+First, let's preprocess these traces so later steps don't have to do it on-the-fly:
+
+    cd ~/barnum-tracer/traces
+    find -mindepth 1 -maxdepth 1 -type d | xargs -P `nproc` -n 1 -I {} \
+        ~/barnum-learner/preprocess.py -t 1800 -p {} ../extract/
+    # -t is a timeout, which is good to set just in case ptxed gets stuck.
+    # -p deletes the parsed trace if the timeout was triggered. In general,
+    # never train on partially processed traces.
+
+Assume we have 100 benign and 100 malicious traces.
+Now we'll split our dataset, train a model, test its path accuracy, and then
+classify the testing set:
+
+    cd ~/barnum-learner
+    ./lstm.py -p --train-size=50 --test-size-benign=50 --test-size-malicious=100 \
+        -o ../my-set.txt --save-model=../model.json --save-weights=../weights.h5 \
+         --eval-dir=../eval ../barnum-tracer/traces
+    # We use -p because we already preprocessed the traces.
+    # Samples are split randomly between training and testing, use -o to save the sets.
+    # It's a good idea to always save your model and weights for future use!
+
+The test accuracy reported in the logging is just how well the model learned benign
+paths. Let's classify our test traces and see how well our model detects anomalies:
+
+    cd ~/barnum-learner
+    ./classifier.py -s ../class.bin ../eval
+    # -s saves the threshold so we can reuse it in the future.
+    # The last parameter is always the --eval-dir from lstm.py.
+
+Assuming you provided enough good data, you should (hopefully) get good numbers.
+
 # Useful features
 
 This section highlights some features that are useful in specific senarios.
