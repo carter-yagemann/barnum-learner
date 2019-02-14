@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 from sklearn.externals import joblib
 
 module_name = 'Classifier'
-module_version = '1.2.1'
+module_version = '1.2.2'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -147,20 +147,28 @@ def parse_file(args):
         if not cache is None:
             return (label, cache[0], cache[1], name)
 
+    accuracy = 0
+    confidence = 0.0
+    cnt_acc = 0
+    cnt_con = 0
     with gzip.open(ifilepath, 'rt') as ifile:
         try:
-            parts = [line.strip().split(',') for line in ifile.readlines()]
-            accuracy = [int(part[0]) for part in parts]
-            confidence = [float(part[2]) for part in parts if part[0] == '0']
+            for line in ifile:
+                parts = line.strip().split(',')
+                accuracy += int(parts[0])
+                cnt_acc += 1
+                if parts[0] == '0':
+                    confidence += float(parts[2])
+                    cnt_con += 1
         except (IOError, EOFError):
             logger.log_error(module_name, 'WARNING: Failed to parse ' + ifilepath)
             return (3, 0, 0, name)
 
-    if len(accuracy) == 0 or len(confidence) == 0:
+    if cnt_acc == 0 or cnt_con == 0:
         return (3, 0, 0, name)
 
-    avg_accuracy = 1.0 - float(sum(accuracy)) / float(len(accuracy))
-    avg_confidence = float(sum(confidence)) / float(len(confidence))
+    avg_accuracy = 1.0 - float(cnt_acc) / float(accuracy)
+    avg_confidence = float(cnt_con) / float(confidence)
 
     # Update cache
     if not options.ignore_cache:
