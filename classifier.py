@@ -29,14 +29,15 @@ from multiprocessing import Pool, cpu_count
 from hashlib import sha256
 import numpy as np
 from sklearn.svm import SVC
+from sklearn.externals import joblib
+from sklearn.metrics import roc_curve
 import matplotlib
 matplotlib.use('Agg')  # Hack so X isn't required
 import matplotlib.pyplot as plt
-from sklearn.externals import joblib
 from imblearn.over_sampling import ADASYN
 
 module_name = 'Classifier'
-module_version = '1.3.0'
+module_version = '1.3.1'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -80,53 +81,16 @@ def get_cache(hash):
             logger.log_warning(module_name, "Failed to access cache: " + str(ex))
             return None
 
-def make_roc(filepath, data):
+def make_roc(filepath, data, classifier):
     ys = np.array([sample[0] for sample in data])
     xs = np.array([sample[1:3] for sample in data])
+    ys_score = classifier.decision_function(xs)
 
-    # Find (roughly) where FP is 0%
-    fp = 1.0
-    weight = 10.0
-    while fp > 0.0:
-        svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
-        svm.fit(xs, ys)
-        weight *= 0.99
+    fpr, tpr, _ = roc_curve(ys, ys_score)
 
-        results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-        benign = [sample for sample in results if sample[0][0] == 0]
-        fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-        fp = float(len(fps)) / float(len(benign))
-
-    # Step backwards until FP rises above 0%
-    while fp <= 0.0:
-        prev_w = weight
-        weight *= 1.01
-        svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
-        svm.fit(xs, ys)
-
-        results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-        benign = [sample for sample in results if sample[0][0] == 0]
-        fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-        fp = float(len(fps)) / float(len(benign))
-    weight = prev_w
-    fp = 0.0
-
-    # Plot ROC curve
     with open(filepath, 'w') as ofile:
         ofile.write("fp,tp\n")  # CSV header
-        while fp < 1.0:
-            svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
-            svm.fit(xs, ys)
-            weight *= 1.005
-
-            results = [[sample, svm.predict([sample[1:3]])] for sample in data]
-            benign = [sample for sample in results if sample[0][0] == 0]
-            malicious = [sample for sample in results if sample[0][0] == 1]
-            fps = [sample for sample in results if sample[0][0] == 0 and sample[1] == 1]
-            fp = float(len(fps)) / float(len(benign))
-            tps = [sample for sample in results if sample[0][0] == 1 and sample[1] == 1]
-            tp = float(len(tps)) / float(len(malicious))
-
+        for fp, tp in zip(fpr, tpr):
             ofile.write(','.join([str(fp), str(tp)]) + "\n")
 
 def parse_file(args):
@@ -343,7 +307,7 @@ def main():
     # ROC
     if not options.roc is None:
         logger.log_info(module_name, "Saving ROC to " + options.roc)
-        make_roc(options.roc, data)
+        make_roc(options.roc, data, svm)
 
     logger.log_stop()
 
