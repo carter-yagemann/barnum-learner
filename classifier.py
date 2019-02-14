@@ -24,6 +24,7 @@ import logging
 from optparse import OptionParser
 import gzip
 import pickle
+import warnings
 from multiprocessing import Pool, cpu_count
 from hashlib import sha256
 import numpy as np
@@ -32,9 +33,10 @@ import matplotlib
 matplotlib.use('Agg')  # Hack so X isn't required
 import matplotlib.pyplot as plt
 from sklearn.externals import joblib
+from imblearn.over_sampling import ADASYN
 
 module_name = 'Classifier'
-module_version = '1.2.2'
+module_version = '1.3.0'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -243,15 +245,22 @@ def main():
         logger.log_info(module_name, "Creating classifier")
         # Train a new classifier from scratch
         if options.force:
-            # SVM (we're going to force it to have 0 FP)
+            # Use ADASYN to over sample the benign class until FP falls to 0
+            warnings.filterwarnings("ignore", module="imblearn")
             fp = 1.0
-            weight = 10.0
+            ben_cnt = len([y for y in ys if y == 0])
+            mal_cnt = len(ys) - ben_cnt
+            ben_step = max(1, int(ben_cnt * 0.1))
 
-            while fp > 0.0 and weight > 0.0000001:
+            while fp > 0.0:
+                ben_cnt += ben_step
+                try:
+                    xs_os, ys_os = ADASYN({0: ben_cnt, 1: mal_cnt}, n_jobs=options.workers).fit_resample(xs, ys)
+                except ValueError:
+                    continue  # Happens if change in counts produces too little change in ratio
 
-                svm = SVC(kernel='linear', class_weight={0: 1.0, 1: weight})
-                svm.fit(xs, ys)
-                weight *= 0.999
+                svm = SVC(kernel='linear')
+                svm.fit(xs_os, ys_os)
 
                 results = [[sample, svm.predict([sample[1:3]])] for sample in data]
                 benign = [sample for sample in results if sample[0][0] == 0]
