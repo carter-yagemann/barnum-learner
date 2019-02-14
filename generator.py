@@ -23,24 +23,38 @@ import logger
 import logging
 import reader
 import filters
-from multiprocessing import Process, Queue, Value
+import multiprocessing as mp
+import threading
 from datetime import datetime
 import os
 import sys
 import traceback
 from copy import deepcopy
 from time import sleep
+import numpy as np
 if sys.version_info.major <= 2:
-    from Queue import Empty
+    import Queue as queue
 else:
-    from queue import Empty
+    import queue
 
 module_name = 'Generator'
 
 gen_workers = []
 in_service = []
-running = Value('b', False)
-fin_tasks = Value('i', 0)
+running = mp.Value('b', False)
+fin_tasks = mp.Value('i', 0)
+
+def prefetch(src, dst):
+    """ Fetch items from src and place them in dst. """
+    while True:
+        try:
+            dst.put(src.get(True, 5))
+        except queue.Empty:
+            in_service = get_in_service()
+            if in_service == 0:
+                break
+            else:
+                continue
 
 def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, max_x=128, max_y=128, batch_size=1):
     """ Starts up a generator for dispatching jobs to the target function.
@@ -75,19 +89,27 @@ def start_generator(num_workers, target, res_queue_max=1000, seq_len=1, max_x=12
     global job_queue, res_queue, gen_workers, running, in_service
 
     # Initialize queues and spawn workers
-    job_queue = Queue()
-    res_queue = Queue(res_queue_max)
+    job_queue = mp.Queue()
+    res_queue = mp.Queue(res_queue_max)
+    fin_queue = queue.Queue(res_queue_max)
     running.value = True
     fin_tasks.value = 0
     for id in range(num_workers):
-        in_service.append(Value('b', False))
+        in_service.append(mp.Value('b', False))
         worker_args = (target, job_queue, res_queue, running, in_service[id], seq_len,
                        max_x, max_y, batch_size)
-        worker = Process(target=worker_loop, args=worker_args)
+        worker = mp.Process(target=worker_loop, args=worker_args)
+        worker.daemon = True
         gen_workers.append(worker)
         worker.start()
 
-    return (job_queue, res_queue)
+    # Optimization: Multiprocessing queues don't deserialize until get() is called.
+    #     Using a separate thread to dequeue items into a threading queue saves time.
+    prefetcher = threading.Thread(target=prefetch, args=(res_queue, fin_queue))
+    prefetcher.daemon = True
+    prefetcher.start()
+
+    return (job_queue, fin_queue)
 
 def stop_generator(timeout=10):
     global module_name
@@ -138,7 +160,7 @@ def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1, ma
     while True:
         try:
             job = job_queue.get(True, 5)
-        except Empty:
+        except queue.Empty:
             if running.value:
                 continue
             else:
@@ -171,7 +193,7 @@ def worker_loop(target, job_queue, res_queue, running, in_service, seq_len=1, ma
                         batch_xs.append(deepcopy([x % max_x for x in seq]))
                         batch_ys.append(deepcopy([output[1] % max_y]))
                         if len(batch_ys) == batch_size:
-                            res_queue.put([job[0], deepcopy(batch_xs), deepcopy(batch_ys)])
+                            res_queue.put([job[0], np.array(batch_xs, copy=True), np.array(batch_ys, copy=True)])
                             batch_xs = []
                             batch_ys = []
         except KeyboardInterrupt:
@@ -207,7 +229,7 @@ def test_generator():
         while True:
             try:
                 res = output.get(True, 5)
-            except:
+            except queue.Empty:
                 count = get_in_service()
                 if get_in_service() == 0:
                     break

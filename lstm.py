@@ -25,16 +25,19 @@ import reader
 import generator
 import filters
 from optparse import OptionParser, OptionGroup
-import numpy as np
 import random
 from multiprocessing import cpu_count
 from datetime import datetime
 import traceback
 import tempfile
 import gzip
+if sys.version_info.major <= 2:
+    import Queue as queue
+else:
+    import queue
 
 module_name = 'LSTM'
-module_version = '1.1.6'
+module_version = '1.2.0'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -126,7 +129,7 @@ def build_model():
     opt = optimizers.RMSprop(lr=options.learning_rate, decay=options.learning_decay)
     model.compile(loss='sparse_categorical_crossentropy',
                   optimizer=opt,
-                  metrics=['sparse_categorical_accuracy', 'sparse_top_k_categorical_accuracy'])
+                  metrics=['sparse_categorical_accuracy'])
 
     logger.log_info(module_name, 'Model Summary:')
     model.summary(print_fn=(lambda x: logger.log_info(module_name, x)))
@@ -163,7 +166,7 @@ def map_to_model(samples, f):
     while True:
         try:
             res = oqueue.get(True, 5)
-        except:
+        except queue.Empty:
             in_service = generator.get_in_service()
             if in_service == 0:
                 break
@@ -171,7 +174,7 @@ def map_to_model(samples, f):
                 logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        yield f(np.array(res[1]), np.array(res[2]))
+        yield f(res[1], res[2])
         batch_cnt += 1
 
     logger.log_info(module_name, "Processed " + str(batch_cnt) + " batches, " + str(batch_cnt * options.batch_size) + " samples")
@@ -313,7 +316,7 @@ def eval_model(eval_set):
     while True:
         try:
             res = oqueue.get(True, 5)
-        except:
+        except queue.Empty:
             in_service = generator.get_in_service()
             if in_service == 0:
                 break
@@ -321,7 +324,7 @@ def eval_model(eval_set):
                 logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        ps = model.predict_on_batch(np.array(res[1])).tolist()
+        ps = model.predict_on_batch(res[1]).tolist()
         cs = [max(p) for p in ps]                          # Max confidence
         ms = [p.index(max(p)) for p in ps]                 # Most likely label
         ts = [int(a == b[0]) for a, b in zip(ms, res[2])]  # Compare prediction to real label
