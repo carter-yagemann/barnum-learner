@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 from imblearn.over_sampling import ADASYN
 
 module_name = 'Classifier'
-module_version = '1.3.1'
+module_version = '1.3.2'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -133,8 +133,8 @@ def parse_file(args):
     if cnt_acc == 0 or cnt_con == 0:
         return (3, 0, 0, name)
 
-    avg_accuracy = 1.0 - float(cnt_acc) / float(accuracy)
-    avg_confidence = float(cnt_con) / float(confidence)
+    avg_accuracy = 1.0 - (float(accuracy) / float(cnt_acc))
+    avg_confidence = float(confidence) / float(cnt_con)
 
     # Update cache
     if not options.ignore_cache:
