@@ -261,9 +261,12 @@ sequences in the third trace that is in neither the first or second traces, and
 so forth. This is useful for approximating your "learning curve" to find the
 point where adding more traces yields little added value.
 
-* `eval2png.py`: Takes an evaluation gzip file and creates an image where each
-pixel represents a prediction made with white meaning correct and black otherwise.
-This is useful for visualizing traces for debugging.
+* `eval2png.py`: Takes an evaluation gzip file and creates a visualization.
+By default, the resulting pixels will be white for correct predictions and black
+otherwise. Using the color option will produce pixels based on the BBIDs in the
+trace. MD5 is locality insensitive, making it useful for spotting control flow
+patterns, whereas adler32 is locality sensitive, which is useful for seeing jump
+distances.
 
 There are also two alternative learners used in the paper for comparison. Both
 take the place of the first layer in this system:

@@ -24,30 +24,66 @@ import logger
 import gzip
 from optparse import OptionParser
 import png
+from hashlib import md5
+from zlib import adler32
 import numpy as np
 
 module_name = 'Eval2PNG'
-module_version = '1.0.0'
+module_version = '1.2.0'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
 ERROR_RUNTIME     = 2
 
-def parse_eval(ifilepath, width):
+def bbid_md5(bbid):
+    return [int(byte) for byte in md5(bbid).digest()[:3]]
+
+def bbid_adler32(bbid):
+    return [int(byte) for byte in adler32(bbid).to_bytes(4, 'big')[:3]]
+
+digests = {
+    'md5': bbid_md5,
+    'adler32': bbid_adler32,
+}
+
+def parse_eval(ifilepath, width, color=None):
+    if color and color in digests:
+        hash_func = digests[color]
+    elif color:
+        logger.log_error(module_name, 'Invalid hashing algorithm: ' + str(color))
+        return
+
     with gzip.open(ifilepath, 'rt') as ifile:
         try:
             parts = [line.strip().split(',') for line in ifile.readlines()]
-            accuracy = [int(part[0]) for part in parts]
+            if color:
+                data = [part[3].encode('ascii') for part in parts]
+            else:
+                pixels = [int(part[0]) for part in parts]
         except (IOError, EOFError):
             logger.log_error(module_name, 'Failed to parse ' + ifilepath)
             return
 
-    # Padding
-    if len(accuracy) % width != 0:
-        accuracy += [1] * (width - len(accuracy) % width)
+    # If needed, convert BBIDs into colored pixels
+    if color:
+        pixels = list()
+        for bbid in data:
+            pixels.append(hash_func(bbid))
 
-    # Boxed row, flat pixel, 1 bit depth, greyscale representation
-    return np.reshape(np.array(accuracy), (-1, width))
+    # Padding
+    if color:
+        white = [255, 255, 255]
+    else:
+        white = [1]
+    if len(pixels) % width != 0:
+        pixels += white * (width - len(pixels) % width)
+
+    if color:
+        # Boxed row, flat pixel, 8 bit depth, 3 channels (RGB)
+        return np.reshape(np.array(pixels), (-1, width * 3))
+    else:
+        # Boxed row, flat pixel, 1 bit depth, greyscale representation
+        return np.reshape(np.array(pixels), (-1, width))
 
 def main():
     parser = OptionParser(usage='Usage: %prog [options] eval_file output_png', version='Barnum Eval2PNG ' + module_version)
@@ -55,6 +91,8 @@ def main():
                       help='If output PNG filepath already exists, overwrite it')
     parser.add_option('-w', '--width', action='store', type='int', default=4096,
                       help='Width of output image (default: 4096)')
+    parser.add_option('-c', '--color', action='store', type='str', default=None,
+                      help='Have each pixel represent the trace label instead of prediction accuracy (supported options: md5, adler32)')
 
     options, args = parser.parse_args()
 
@@ -80,7 +118,7 @@ def main():
 
     logger.log_info(module_name, 'Parsing ' + eval_file)
     try:
-        data = parse_eval(eval_file, options.width)
+        data = parse_eval(eval_file, options.width, options.color)
     except Exception as ex:
         logger.log_error(module_name, "Unexpected exception: " + str(ex))
         logger.log_stop()
@@ -93,7 +131,11 @@ def main():
 
     logger.log_info(module_name, 'Saving PNG to ' + output_file)
     try:
-        png.from_array(data, 'L;1').save(output_file)
+        if options.color:
+            fmt_str = 'RGB;8'
+        else:
+            fmt_str = 'L;1'
+        png.from_array(data, fmt_str).save(output_file)
     except Exception as ex:
         logger.log_error(module_name, "Unexpected exception: " + str(ex))
         logger.log_stop()
