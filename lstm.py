@@ -31,6 +31,7 @@ from datetime import datetime
 import traceback
 import tempfile
 import gzip
+import threading
 import numpy as np
 if sys.version_info.major <= 2:
     import Queue as queue
@@ -38,13 +39,17 @@ else:
     import queue
 
 module_name = 'LSTM'
-module_version = '1.2.1'
+module_version = '1.3.0'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
 EXIT_UNIMPLEMENTED  = 2
 EXIT_RUNTIME_ERROR  = 3
 EXIT_USER_INTERRUPT = 4
+
+# Eval sync objects
+EVAL_PRED_DONE = threading.Event()
+EVAL_WRITE_LOCKS = dict()
 
 def clean_exit(error_code, message, kill_generator=False):
     """ Performs a clean exit, useful for when errors happen that can't be recovered from."""
@@ -280,6 +285,25 @@ def test_model(testing_set):
 
     logger.log_info(module_name, 'Results: ' + ', '.join([str(model.metrics_names[x]) + ' ' + str(res[x]) for x in range(len(res))]))
 
+def eval_worker(job_queue):
+    while True:
+        try:
+            res, ps = job_queue.get(True, 5)
+        except queue.Empty:
+            if EVAL_PRED_DONE.is_set():
+                break
+            else:
+                continue
+
+        ys = res[2].flatten()
+        cs = np.nanmax(ps, 1)    # Max confidence
+        ms = ps.argsort()[:,-1]  # Most likely label
+        ts = (ms == ys)          # Compare prediction to real label
+        with EVAL_WRITE_LOCKS[res[0]]:
+            with gzip.open(res[0], 'at') as ofile:
+                for index in range(len(ys)):
+                    ofile.write(str(int(ts[index])) + ',' + str(ms[index]) + ',' + str(cs[index]) + ',' + str(ys[index]) + "\n")
+
 def eval_model(eval_set):
     """ Evaluate the LSTM model."""
     random.shuffle(eval_set)
@@ -305,6 +329,7 @@ def eval_model(eval_set):
     for sample in eval_set:
         o_filename = sample['label'] + '-' + path.basename(sample['base_dir']) + '.gz'
         o_filepath = path.join(eval_dir, o_filename)
+        EVAL_WRITE_LOCKS[o_filepath] = threading.Lock()
         if options.preprocess:
             iqueue.put((o_filepath, sample['parsed_filepath']))
         else:
@@ -313,6 +338,17 @@ def eval_model(eval_set):
                 logger.log_warning(module_name, 'Failed to parse memory file, skipping')
                 continue
             iqueue.put((o_filepath, sample['trace_filepath'], options.bin_dir, sample_memory, options.timeout))
+
+    # Use threads instead of processes to handle and write the prediction
+    # results because I/O and numpy crunching do not require the GIL.
+    EVAL_PRED_DONE.clear()
+    wqueue = queue.Queue(options.queue_size)
+    workers = list()
+    for id in range(threads):
+        worker = threading.Thread(target=eval_worker, args=(wqueue,))
+        worker.daemon = True
+        worker.start()
+        workers.append(worker)
 
     while True:
         try:
@@ -325,16 +361,13 @@ def eval_model(eval_set):
                 logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        ps = model.predict_on_batch(res[1])
+        wqueue.put([res, model.predict_on_batch(res[1])])
 
-        ys = res[2].flatten()
-        cs = np.nanmax(ps, 1)    # Max confidence
-        ms = ps.argsort()[:,-1]  # Most likely label
-        ts = (ms == ys)          # Compare prediction to real label
-        with gzip.open(res[0], 'at') as ofile:
-            for index in range(len(ys)):
-                ofile.write(str(int(ts[index])) + ',' + str(ms[index]) + ',' + str(cs[index]) + ',' + str(ys[index]) + "\n")
-
+    EVAL_PRED_DONE.set()
+    logger.log_debug(module_name, "Waiting for eval workers to terminate")
+    for worker in workers:
+        worker.join()
+    logger.log_debug(module_name, "All eval workers are done")
     generator.stop_generator(10)
 
 if __name__ == '__main__':
