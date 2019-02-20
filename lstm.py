@@ -31,13 +31,14 @@ from datetime import datetime
 import traceback
 import tempfile
 import gzip
+import numpy as np
 if sys.version_info.major <= 2:
     import Queue as queue
 else:
     import queue
 
 module_name = 'LSTM'
-module_version = '1.2.0'
+module_version = '1.2.1'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -324,13 +325,15 @@ def eval_model(eval_set):
                 logger.log_debug(module_name, str(in_service) + ' workers still working on jobs')
                 continue
 
-        ps = model.predict_on_batch(res[1]).tolist()
-        cs = [max(p) for p in ps]                          # Max confidence
-        ms = [p.index(max(p)) for p in ps]                 # Most likely label
-        ts = [int(a == b[0]) for a, b in zip(ms, res[2])]  # Compare prediction to real label
+        ps = model.predict_on_batch(res[1])
+
+        ys = res[2].flatten()
+        cs = np.nanmax(ps, 1)    # Max confidence
+        ms = ps.argsort()[:,-1]  # Most likely label
+        ts = (ms == ys)          # Compare prediction to real label
         with gzip.open(res[0], 'at') as ofile:
-            for c, m, t, y in zip(cs, ms, ts, res[2]):
-                ofile.write(str(t) + ',' + str(m) + ',' + str(c) + ',' + str(y[0]) + "\n")
+            for index in range(len(ys)):
+                ofile.write(str(int(ts[index])) + ',' + str(ms[index]) + ',' + str(cs[index]) + ',' + str(ys[index]) + "\n")
 
     generator.stop_generator(10)
 
