@@ -27,19 +27,20 @@ import png
 from hashlib import md5
 from zlib import adler32
 import numpy as np
+from struct import unpack, pack
 
 module_name = 'Eval2PNG'
-module_version = '1.2.0'
+module_version = '1.2.1'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
 ERROR_RUNTIME     = 2
 
 def bbid_md5(bbid):
-    return [int(byte) for byte in md5(bbid).digest()[:3]]
+    return unpack('BBB', md5(bbid).digest()[:3])
 
 def bbid_adler32(bbid):
-    return [int(byte) for byte in adler32(bbid).to_bytes(4, 'big')[:3]]
+    return unpack('BBB', pack('I', adler32(bbid))[-3:])
 
 digests = {
     'md5': bbid_md5,
