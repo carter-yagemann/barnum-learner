@@ -30,7 +30,7 @@ import numpy as np
 from struct import unpack, pack
 
 module_name = 'Eval2PNG'
-module_version = '1.2.1'
+module_version = '1.2.2'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
@@ -50,6 +50,7 @@ digests = {
 def parse_eval(ifilepath, width, color=None):
     if color and color in digests:
         hash_func = digests[color]
+        width *= 3  # Three channels per pixel
     elif color:
         logger.log_error(module_name, 'Invalid hashing algorithm: ' + str(color))
         return
@@ -69,7 +70,7 @@ def parse_eval(ifilepath, width, color=None):
     if color:
         pixels = list()
         for bbid in data:
-            pixels.append(hash_func(bbid))
+            pixels += hash_func(bbid)
 
     # Padding
     if color:
@@ -77,14 +78,9 @@ def parse_eval(ifilepath, width, color=None):
     else:
         white = [1]
     if len(pixels) % width != 0:
-        pixels += white * (width - len(pixels) % width)
+        pixels += white * ((width - len(pixels) % width) // len(white))
 
-    if color:
-        # Boxed row, flat pixel, 8 bit depth, 3 channels (RGB)
-        return np.reshape(np.array(pixels), (-1, width * 3))
-    else:
-        # Boxed row, flat pixel, 1 bit depth, greyscale representation
-        return np.reshape(np.array(pixels), (-1, width))
+    return np.reshape(np.array(pixels, dtype=np.uint8), (-1, width))
 
 def main():
     parser = OptionParser(usage='Usage: %prog [options] eval_file output_png', version='Barnum Eval2PNG ' + module_version)
