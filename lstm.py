@@ -39,7 +39,7 @@ else:
     import queue
 
 module_name = 'LSTM'
-module_version = '1.3.0'
+module_version = '1.3.1'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -85,7 +85,7 @@ def load_sets():
                     set_key = line[1:-1]
                 else:
                     # Line should be the path to a trace directory
-                    if not path.abspath(root_dir) in line:
+                    if not root_dir in line:
                         logger.log_warning(module_name, 'Input data specified with -i must be in ' + str(root_dir) + ', skipping')
                         continue
                     if not path.isdir(line):
@@ -475,7 +475,7 @@ if __name__ == '__main__':
     from keras.utils import multi_gpu_model
     from keras import optimizers
 
-    root_dir = args[0]
+    root_dir = path.abspath(args[0])
 
     # Initialization
     logger.log_start(options.log_level)
