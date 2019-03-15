@@ -151,6 +151,9 @@ If you're using a GPU enabled framework, adjusting the batch size (`-b`) can
 significantly improve performance. There's also the `--multi-gpu` option in
 `lstm.py` if your system has multiple GPUs.
 
+Also see `--use-cudnn`. This implementation only works on GPUs and Tensorflow,
+but in practice can reduce training time in half.
+
 ### PyPy
 
 For the adventurous who care more about speed than stability, here's the current

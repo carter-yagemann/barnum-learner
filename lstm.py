@@ -39,7 +39,7 @@ else:
     import queue
 
 module_name = 'LSTM'
-module_version = '1.3.1'
+module_version = '1.4.0'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -101,19 +101,25 @@ def load_sets():
 
 def build_model():
     """ Builds the LSTM model assuming two categories."""
+    # CuDNNLSTM is significantly faster than LSTM, but only works on GPUs and Tensorflow
+    if options.use_cudnn:
+        LSTMImpl = CuDNNLSTM
+    else:
+        LSTMImpl = LSTM
+
     template = Sequential()
 
     template.add(Embedding(input_dim=options.embedding_in_dim,
                         output_dim=options.embedding_out_dim,
                         input_length=options.seq_len))
 
-    template.add(LSTM(options.units, return_sequences=True))
+    template.add(LSTMImpl(options.units, return_sequences=True))
     template.add(Activation('relu'))
 
-    template.add(LSTM(options.units, return_sequences=True))
+    template.add(LSTMImpl(options.units, return_sequences=True))
     template.add(Activation('relu'))
 
-    template.add(LSTM(options.units))
+    template.add(LSTMImpl(options.units))
 
     template.add(Dense(128))
     template.add(Activation('relu'))
@@ -461,6 +467,8 @@ if __name__ == '__main__':
                                  help='Load weights from the provided filepath (this will skip training and head straight to evaluation)')
     parser_group_lstm.add_option('--multi-gpu', action='store', type='int', default=None,
                                  help='Enable multi-GPU mode using the provided number of GPUs (default: disabled)')
+    parser_group_lstm.add_option('--use-cudnn', action='store_true',
+                                 help='Use CuDNN, which is significantly faster, but only supports GPUs and Tensorflow (default: disabled)')
     parser.add_option_group(parser_group_lstm)
 
     options, args = parser.parse_args()
@@ -471,7 +479,7 @@ if __name__ == '__main__':
 
     # Keras likes to print $@!& to stdout, so don't import it until after the input parameters have been validated
     from keras.models import Model, Sequential, model_from_json
-    from keras.layers import Dense, LSTM, Embedding, Activation, Dropout
+    from keras.layers import Dense, LSTM, CuDNNLSTM, Embedding, Activation, Dropout
     from keras.utils import multi_gpu_model
     from keras import optimizers
 
