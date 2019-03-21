@@ -19,12 +19,6 @@ This is where the second layer comes in. It calculates the first layer's
 performance and chooses thresholds to make a final decision about if a trace
 is anomalous.
 
-Additionally, this system can attempt to cluster traces that were found to be
-anomalous. First, a trace is analyzed to find patches of high misprediction.
-If found, those patches are extracted as a slice that should contain mostly
-anomalous activity. The slices are converted into vectors and then clustered
-using cosine distance.
-
 # Installation
 
 This project is compatible with Python 2 and 3 on most Linux systems (e.g. Debian).
@@ -46,13 +40,6 @@ the [repo](https://github.com/intelxed/xed). After that, build `ptxed`:
     make
     # Add ptxed/build/bin to your PATH
 
-If you only want binary classification, you're ready at this point.
-
-Optionally, if you want to do unsupervised clustering using `cluster.py`,
-you'll need a Redis database:
-
-    sudo apt install redis-server
-
 # Usage
 
 See `./lstm.py --help`, `./classifier.py --help`, and `./cluster.py --help` for options
@@ -69,8 +56,13 @@ for detecting anomalies. It reports the final results in terms of error rates an
 produces a graph for visualization.
 
 `cluster.py` also takes the output from the previously mentioned evaluation phase and
-clusters anomalies using nearest neighbor with cosine distance. Note that the evaluation files you
-want to query will need to be in a seperate directory from the files used for training. 
+clusters anomalies. The current approach is based on DBSCAN, so it does not need to know
+the number of clusters in advance. The results are likely to be different than the labels
+produced by AV companies since Barnum's approach is focused entirely on control-flow behavior.
+For example, samples from the `pdfka` and `pidief` families can use the same exploit, causing
+them to end up in the same cluster.
+See the 2009 DIMVA paper "Scalable, Behavior-Based Malware Clustering" for more discussion
+on this philosophical topic.
 
 ## Step-by-Step for Beginners
 

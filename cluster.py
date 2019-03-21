@@ -19,203 +19,242 @@
 
 import sys
 import os
-import logging
 import logger
+import logging
+from optparse import OptionParser
 import gzip
-import struct
 from multiprocessing import Pool, cpu_count
-from optparse import OptionParser, OptionGroup
-
 import numpy as np
-from sklearn.neighbors import NearestNeighbors
-import redis
+from sklearn.cluster import DBSCAN
+import matplotlib
+matplotlib.use('Agg')  # Hack so X isn't required
+import matplotlib.pyplot as plt
+from matplotlib.path import Path
+from matplotlib.spines import Spine
+from matplotlib.projections.polar import PolarAxes
+from matplotlib.projections import register_projection
 
 module_name = 'Cluster'
-module_version = '1.1.0'
+module_version = '1.0.0'
 
 # Error Codes
 ERROR_INVALID_ARG = 1
 ERROR_RUNTIME     = 2
 
-def moving_average(a, n):
-    """ Moving average of a with window size n."""
-    ret = np.cumsum(a, dtype=float)
-    ret[n:] = ret[n:] - ret[:-n]
-    return ret[n - 1:] / n
+def radar_factory(num_vars, frame='circle'):
+    """Create a radar chart with `num_vars` axes.
 
-def slice(array, window=10000, threshold=0.1):
-    """ Slices array from the first index where the moving average falls below the threshold to the last.
+    This function creates a RadarAxes projection and registers it.
 
-    Resulting slice is a slight over-approximation. If the moving average never falls below the threshold,
-    the original array is returned.
+    Parameters
+    ----------
+    num_vars : int
+        Number of variables for radar chart.
+    frame : {'circle' | 'polygon'}
+        Shape of frame surrounding axes.
 
-    array - the array to slice.
-    window - the size of the window for moving average.
-    threshold - the threshold below which a slice will be taken.
     """
-    avg = moving_average(array, window)
-    start = np.argmax(avg < threshold)
-    end = len(array) - np.argmax(avg[::-1] < threshold) + window
-    return (start, end)
+    # calculate evenly-spaced axis angles
+    theta = np.linspace(0, 2*np.pi, num_vars, endpoint=False)
 
-def process_eval(args):
-    ifile, options = args
-    max_bbid = options.max_val
-    # For each prediction, 1 if correct, 0 if wrong
-    res = [int(line.split(',', 1)[0]) for line in gzip.open(ifile, 'rt').readlines()]
-    bbs = [int(line[::-1].split(',', 1)[0][::-1]) for line in gzip.open(ifile, 'rt').readlines()]
-    start, end = slice(res, options.window, options.threshold)
-    if len(res[start:end]) == len(res) and not options.allow_ft:
-        return (ifile, None)  # Could not take slice at given threshold
-    one_hot = [0] * max_bbid
-    for bb in bbs[start:end]:
-        if bb >= max_bbid:
-            continue  # Avoid out of bounds write
-        one_hot[bb] = 1
-    return (ifile, one_hot)
+    def draw_poly_patch(self):
+        # rotate theta such that the first axis is at the top
+        verts = unit_poly_verts(theta + np.pi / 2)
+        return plt.Polygon(verts, closed=True, edgecolor='k')
 
-def parse_args():
-    parser = OptionParser(usage='Usage: %prog [options]', version='Barnum Cluster ' + module_version)
+    def draw_circle_patch(self):
+        # unit circle centered on (0.5, 0.5)
+        return plt.Circle((0.5, 0.5), 0.5)
 
-    parser_group_sys = OptionGroup(parser, 'System Options')
-    parser_group_sys.add_option('-w', '--workers', action='store', type='int', default=cpu_count(),
-                                help='Max number of worker threads to use (default: number of cores)')
-    parser_group_sys.add_option('-a', '--allow-full-traces', dest='allow_ft', action='store_true',
-                                help="If a slice isn't found, vectorize the whole trace (default: require slice)")
-    parser_group_sys.add_option('--threshold', action='store', type='float', default=0.1,
-                                help='Slicing threshold (default: 0.1)')
-    parser_group_sys.add_option('--window', action='store', type='int', default=10000,
-                                help='Window size to use when slicing (default: 10000)')
-    parser.add_option_group(parser_group_sys)
+    patch_dict = {'polygon': draw_poly_patch, 'circle': draw_circle_patch}
+    if frame not in patch_dict:
+        raise ValueError('unknown value for `frame`: %s' % frame)
 
-    parser_group_train = OptionGroup(parser, 'Training Options')
-    parser_group_train.add_option('-t', '--train-dir', action='store', dest='tdir', type='str', default=None,
-                                  help='Train clustering using evaluation files in this directory.')
-    parser_group_train.add_option('-m', '--max-value', action='store', dest='max_val', type='int', default=1024,
-                                  help='This should match the --max-classes param from lstm.py and prob.py (default: 1024)')
-    parser.add_option_group(parser_group_train)
+    class RadarAxes(PolarAxes):
 
-    parser_group_query = OptionGroup(parser, 'Query Options')
-    parser_group_query.add_option('-q', '--query-dir', action='store', dest='qdir', type='str', default=None,
-                                  help='Query clustering using evaluation files in this directory.')
-    parser_group_query.add_option('-c', '--csv', action='store', type='str', default=None,
-                                  help='Write output as CSV to given filepath (default: no CSV)')
-    parser.add_option_group(parser_group_query)
+        name = 'radar'
+        # use 1 line segment to connect specified points
+        RESOLUTION = 1
+        # define draw_frame method
+        draw_patch = patch_dict[frame]
 
-    parser_group_redis = OptionGroup(parser, 'Redis Options')
-    parser_group_redis.add_option('-r', '--use-redis', action='store_true', dest='use_redis', default=False,
-                                  help='Store processed training samples in Redis. Omit training dir to train from these.')
-    parser_group_redis.add_option('--hostname', action='store', dest='redis_host', type='string', default='localhost',
-                                  help='Hostname for Redis database (default: localhost)')
-    parser_group_redis.add_option('-p', '--port', action='store', dest='redis_port', type='int', default=6379,
-                                  help='Port for Redis database (default: 6379)')
-    parser_group_redis.add_option('-d', '--db', action='store', dest='redis_db', type='int', default=0,
-                                  help='DB number for Redis database (default: 0)')
-    parser.add_option_group(parser_group_redis)
+        def __init__(self, *args, **kwargs):
+            super(RadarAxes, self).__init__(*args, **kwargs)
+            # rotate plot such that the first axis is at the top
+            self.set_theta_zero_location('N')
+
+        def fill(self, *args, **kwargs):
+            """Override fill so that line is closed by default"""
+            closed = kwargs.pop('closed', True)
+            return super(RadarAxes, self).fill(closed=closed, *args, **kwargs)
+
+        def plot(self, *args, **kwargs):
+            """Override plot so that line is closed by default"""
+            lines = super(RadarAxes, self).plot(*args, **kwargs)
+            for line in lines:
+                self._close_line(line)
+
+        def _close_line(self, line):
+            x, y = line.get_data()
+            if x[0] != x[-1]:
+                x = np.concatenate((x, [x[0]]))
+                y = np.concatenate((y, [y[0]]))
+                line.set_data(x, y)
+
+        def set_varlabels(self, labels):
+            self.set_thetagrids(np.degrees(theta), labels)
+
+        def _gen_axes_patch(self):
+            return self.draw_patch()
+
+        def _gen_axes_spines(self):
+            if frame == 'circle':
+                return PolarAxes._gen_axes_spines(self)
+            # The following is a hack to get the spines (i.e. the axes frame)
+            # to draw correctly for a polygon frame.
+
+            # spine_type must be 'left', 'right', 'top', 'bottom', or `circle`.
+            spine_type = 'circle'
+            verts = unit_poly_verts(theta + np.pi / 2)
+            # close off polygon by repeating first vertex
+            verts.append(verts[0])
+            path = Path(verts)
+
+            spine = Spine(self, spine_type, path)
+            spine.set_transform(self.transAxes)
+            return {'polar': spine}
+
+    register_projection(RadarAxes)
+    return theta
+
+
+def unit_poly_verts(theta):
+    """Return vertices of polygon for subplot axes.
+
+    This polygon is circumscribed by a unit circle centered at (0.5, 0.5)
+    """
+    x0, y0, r = [0.5] * 3
+    verts = [(r*np.cos(t) + x0, r*np.sin(t) + y0) for t in theta]
+    return verts
+
+def parse_file(args):
+    """Parse a single evaluation file"""
+    ifilepath, max_classes = args
+    name = os.path.basename(ifilepath)
+
+    anomalies = [0] * max_classes
+    with gzip.open(ifilepath, 'rt') as ifile:
+        try:
+            for line in ifile:
+                # format: "correct,pred_bin,confidence,real_bin\n"
+                parts = line.split(',')
+                if not int(parts[0]):
+                    anomalies[int(parts[1]) % max_classes] += 1
+        except (IOError, EOFError):
+            logger.log_error(module_name, 'WARNING: Failed to parse %s' % ifilepath)
+            return None
+
+    # return numpy array of percentages
+    return (np.array(anomalies, dtype=np.single) / sum(anomalies), name)
+
+def main():
+    """Main"""
+    parser = OptionParser(usage='Usage: %prog [options] eval_dir', version='Barnum Cluster ' + module_version)
+    parser.add_option('-c', '--csv', action='store', type='str', default=None,
+                      help='Save CSV of results to given filepath (default: no CSV)')
+    parser.add_option('-p', '--plot', action='store', type='str', default=None,
+                      help='Save plot as a PNG image to the given filepath (default: no plotting)')
+    parser.add_option('-w', '--workers', action='store', dest='workers', type='int', default=cpu_count(),
+                      help='Number of workers to use (default: number of cores)')
+    parser.add_option('--max-classes', action='store', type='int', default=256,
+                      help='How many classes to use (default: 256)')
+    parser.add_option('--min-samples', action='store', type='int', default=4,
+                      help='Minimum samples to form a cluster in DBSCAN (default: 4)')
+    parser.add_option('--eps', action='store', type='float', default=0.03,
+                      help='Epsilon parameter to DBSCAN (default: 0.03)')
 
     options, args = parser.parse_args()
 
-    # Input validation
-    errors = False
-    if not options.tdir and not options.use_redis:
-        sys.stderr.write("Must specify either a training directory or a Redis database of already processed training samples\n")
-        errors = True
-    if not options.qdir:
-        sys.stderr.write("Must specify a query directory to read queries from\n")
-        errors = True
-    if options.tdir and not os.path.isdir(options.tdir):
-        sys.stderr.write(options.tdir + " is not a directory\n")
-        errors = True
-    if options.qdir and not os.path.isdir(options.qdir):
-        sys.stderr.write(options.qdir + " is not a directory\n")
-        errors = True
-
-    if errors:
+    if len(args) != 1 or options.workers < 1:
         parser.print_help()
         sys.exit(ERROR_INVALID_ARG)
 
-    return (options, args)
-
-def to_redis(one_hot):
-    """ Pack one hot array so it can be stored in Redis. """
-    return struct.pack('B' * len(one_hot), *one_hot)
-
-def from_redis(packed_hot):
-    """ Restore one hot array from Redis representation. """
-    return list(struct.unpack('B' * len(packed_hot), packed_hot))
-
-def load_redis(conn):
-    ifiles = conn.keys('*')
-    pipe = conn.pipeline()
-    map(pipe.get, ifiles)
-    one_hots = [from_redis(hot) for hot in pipe.execute()]
-    return (ifiles, one_hots)
-
-def save_redis(conn, ifiles, one_hots):
-    pipe = conn.pipeline()
-    for hot, ifile in zip(one_hots, ifiles):
-        pipe.set(ifile, to_redis(hot))
-    pipe.execute()
-
-def main():
-    options, args = parse_args()
-
     logger.log_start(20)
-    logger.log_info(module_name, 'Barnum Cluster ' + module_version)
+    logger.log_info(module_name, 'Barnum Cluster %s' % module_version)
 
-    knn = NearestNeighbors(metric='cosine')
-    conn = None
+    idirpath = args[0]
 
-    if options.use_redis:
-        conn = redis.StrictRedis(options.redis_host, options.redis_port, options.redis_db)
-    if options.tdir:
-        ifiles = [os.path.join(options.tdir, file) for file in os.listdir(options.tdir)]
-        ifiles = [file for file in ifiles if len(file) >= 3 and os.path.isfile(file) and file[-3:] == '.gz']
-    qfiles = [os.path.join(options.qdir, file) for file in os.listdir(options.qdir)]
-    qfiles = [file for file in qfiles if len(file) >= 3 and os.path.isfile(file) and file[-3:] == '.gz']
-
-    pool = Pool(options.workers)
-    logger.log_info(module_name, "Generating training inputs")
-    if options.tdir:
-        p_args = zip(ifiles, [options] * len(ifiles))
-        train  = [res for res in pool.map(process_eval, p_args) if res[1]]
-        ifiles = [res[0] for res in train]  # Removing files that couldn't be sliced
-        train  = [res[1] for res in train]  # train is now only the one-hots
-    elif conn:
-        ifiles, train = load_redis(conn)
-    else:  # This should never happen
-        logger.log_error(module_name, "No training directory or Redis connection, cannot continue")
-        pool.close()
+    if not os.path.isdir(idirpath):
+        logger.log_error(module_name, 'ERROR: %s is not a directory' % idirpath)
         logger.log_stop()
-        sys.exit(ERROR_RUNTIME)
-    logger.log_info(module_name, "Generating query inputs")
-    p_args = zip(qfiles, [options] * len(qfiles))
-    query  = [res for res in pool.map(process_eval, p_args) if res[1]]
-    qfiles = [res[0] for res in query]  # Removing files that couldn't be sliced
-    query  = [res[1] for res in query]  # query is now only the one-hots
+        sys.exit(ERROR_INVALID_ARG)
+
+    files = [os.path.join(idirpath, f) for f in os.listdir(idirpath) if os.path.isfile(os.path.join(idirpath, f))]
+    # We only care about clustering malicious traces
+    mal_files = [fp for fp in files if 'malicious' in os.path.basename(fp)]
+    num_mal = len(mal_files)
+
+    # Calculate clustering metrics
+    logger.log_info(module_name, "Parsing " + idirpath)
+    pool = Pool(options.workers)
+    data = [sample for sample in pool.map(parse_file, zip(mal_files, [options.max_classes] * num_mal)) if sample]
     pool.close()
+    xs = np.array([sample[0] for sample in data])
+    ns = [sample[1] for sample in data]
 
-    assert len(ifiles) == len(train)
-    assert len(qfiles) == len(query)
+    # Clustering
+    logger.log_info(module_name, "Calculating clusters")
+    db = DBSCAN(eps=options.eps, min_samples=options.min_samples).fit(xs)
+    core_samples_mask = np.zeros_like(db.labels_, dtype=bool)
+    core_samples_mask[db.core_sample_indices_] = True
+    labels = db.labels_
 
-    # Note: if only conn, no need to save because samples are already from Redis!
-    if conn and options.tdir:
-        logger.log_info(module_name, "Saving processed training samples to Redis")
-        save_redis(conn, ifiles, train)
+    # Number of clusters in labels, ignoring noise if present.
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_noise = list(labels).count(-1)
+    logger.log_info(module_name, '      Number of points: %d' % len(ns))
+    logger.log_info(module_name, '    Number of clusters: %d' % n_clusters)
+    logger.log_info(module_name, 'Number of noise points: %d' % n_noise)
 
-    logger.log_info(module_name, "Training clustering")
-    knn.fit(train)
-
+    # Saving results as CSV
     if not options.csv is None:
-        csv_file = open(options.csv, 'w')
-        csv_file.write("query,nearest,distance\n")
+        logger.log_info(module_name, "Saving CSV to %s" % options.csv)
+        try:
+            with open(options.csv, 'w') as csv_file:
+                csv_file.write("cluster,filename\n")
+                for label, name in zip(labels, ns):
+                    csv_file.write(','.join([str(label), name]) + "\n")
+        except Exception as ex:
+            logger.log_error(module_name, "Failed to save CSV: %s" % str(ex))
 
-    for index, file in enumerate(qfiles):
-        logger.log_info(module_name, file)
-        nn = knn.kneighbors([query[index]], 1, True)
-        logger.log_info(module_name, "    " + str(nn[0][0][0]) + " " + str(ifiles[nn[1][0][0]]))
-        if not options.csv is None:
-            csv_file.write(os.path.basename(file) + ',' + os.path.basename(str(ifiles[nn[1][0][0]])) + ',' + str(nn[0][0][0]) + "\n")
+    # Saving results as plot image
+    if not options.plot is None:
+        logger.log_info(module_name, "Generating plot")
+        theta = radar_factory(options.max_classes, frame='polygon')
+        fig, axes = plt.subplots(subplot_kw=dict(projection='radar'))
+        colors = ['b', 'r', 'g', 'm', 'y']
+        axes.set_varlabels([""])  # no varlabels, they aren't that meaningful
+        axes.set_rgrids([0.2, 0.4, 0.6, 0.8])
+        legend_labels = list()
+        for label_key in set(labels):
+            if label_key == -1:
+                continue  # noise
+            legend_labels.append(label_key)
+            label_color = colors[label_key % len(colors)]
+            # Calculate per-cluster average
+            label_mask = (labels == label_key)
+            label_points = xs[label_mask & core_samples_mask]
+            label_means = np.mean(label_points, axis=0)
+            axes.plot(theta, label_means, color=label_color)
+            axes.fill(theta, label_means, facecolor=label_color, alpha=0.25)
+        # Legend
+        legend = axes.legend(legend_labels, loc=(0.9, .95),
+                             labelspacing=0.1, fontsize='small')
+
+        try:
+            plt.savefig(options.plot)
+        except:
+            logger.log_error(module_name, "Failed to save plot")
 
     logger.log_stop()
 
