@@ -39,7 +39,7 @@ else:
     import queue
 
 module_name = 'LSTM'
-module_version = '1.4.0'
+module_version = '1.5.0'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -113,13 +113,13 @@ def build_model():
                         output_dim=options.embedding_out_dim,
                         input_length=options.seq_len))
 
-    template.add(LSTMImpl(options.units, return_sequences=True))
+    template.add(Bidirectional(LSTMImpl(options.units, return_sequences=True)))
     template.add(Activation('relu'))
 
-    template.add(LSTMImpl(options.units, return_sequences=True))
+    template.add(Bidirectional(LSTMImpl(options.units, return_sequences=True)))
     template.add(Activation('relu'))
 
-    template.add(LSTMImpl(options.units))
+    template.add(Bidirectional(LSTMImpl(options.units)))
 
     template.add(Dense(128))
     template.add(Activation('relu'))
@@ -479,7 +479,7 @@ if __name__ == '__main__':
 
     # Keras likes to print $@!& to stdout, so don't import it until after the input parameters have been validated
     from keras.models import Model, Sequential, model_from_json
-    from keras.layers import Dense, LSTM, CuDNNLSTM, Embedding, Activation, Dropout
+    from keras.layers import Dense, LSTM, CuDNNLSTM, Embedding, Activation, Dropout, Bidirectional
     from keras.utils import multi_gpu_model
     from keras import optimizers
 
