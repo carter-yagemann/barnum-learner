@@ -677,7 +677,7 @@ if __name__ == '__main__':
                 prev_loss = curr_loss
         # Training finished
         if len(options.save_weights) > 0:
-            if options.checkpoint == 0 or not path.isfile(options.save_weights):
+            if options.checkpoint_interval == 0 or not path.isfile(options.save_weights):
                 # No checkpointing was done or weights were never saved, do so now
                 try:
                     model.save_weights(options.save_weights)
@@ -685,7 +685,7 @@ if __name__ == '__main__':
                         template.save_weights(options.save_weights + '.single')
                 except:
                     clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
-            elif options.checkpoint > 0 and path.isfile(options.save_weights):
+            elif options.checkpoint_interval > 0 and path.isfile(options.save_weights):
                 # Checkpointing was done at some point, restore these weights
                 logger.log_info(module_name, "Restoring last checkpoint")
                 try:
