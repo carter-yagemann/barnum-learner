@@ -39,7 +39,7 @@ else:
     import queue
 
 module_name = 'LSTM'
-module_version = '1.5.0'
+module_version = '1.5.1'
 
 # Exit codes
 EXIT_INVALID_ARGS   = 1
@@ -531,6 +531,14 @@ if __name__ == '__main__':
         logger.log_error(module_name, 'Checkpoint interval cannot be negative')
         errors = True
 
+    if len(options.save_weights) > 0 and path.exists(options.save_weights):
+        logger.log_error(module_name, 'Weights output (--save-weights) already exists')
+        errors = True
+
+    if len(options.save_model) > 0 and path.exists(options.save_model):
+        logger.log_error(module_name, 'Model output (--save-model) already exists')
+        errors = True
+
     if options.checkpoint_interval > 0 and len(options.save_weights) < 1:
         logger.log_error(module_name, 'Checkpointing requires --save-weights')
         errors = True
@@ -667,13 +675,23 @@ if __name__ == '__main__':
                 break
             else:
                 prev_loss = curr_loss
+        # Training finished
         if len(options.save_weights) > 0:
-            try:
-                model.save_weights(options.save_weights)
-                if not options.multi_gpu is None:
-                    template.save_weights(options.save_weights + '.single')
-            except:
-                clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
+            if options.checkpoint_interval == 0 or not path.isfile(options.save_weights):
+                # No checkpointing was done or weights were never saved, do so now
+                try:
+                    model.save_weights(options.save_weights)
+                    if not options.multi_gpu is None:
+                        template.save_weights(options.save_weights + '.single')
+                except:
+                    clean_exit(EXIT_RUNTIME_ERROR, "Failed to save LSTM weights:\n" + str(traceback.format_exc()))
+            elif options.checkpoint_interval > 0 and path.isfile(options.save_weights):
+                # Checkpointing was done at some point, restore these weights
+                logger.log_info(module_name, "Restoring last checkpoint")
+                try:
+                    model.load_weights(options.save_weights)
+                except:
+                    clean_exit(EXIT_RUNTIME_ERROR, "Failed to load LSTM weights:\n" + str(traceback.format_exc()))
     else:
         logger.log_info(module_name, 'Restoring LSTM weights from provided filepath')
         try:
